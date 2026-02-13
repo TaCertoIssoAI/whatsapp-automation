@@ -7,9 +7,11 @@
 - Google Cloud Vision API (reverse image search — sub-workflow reverse-search)
 """
 
+import asyncio
 import base64
 import logging
 import tempfile
+import time
 from pathlib import Path
 
 import httpx
@@ -111,6 +113,32 @@ async def analyze_video(video_base64: str) -> str:
 
     try:
         uploaded_file = client.files.upload(file=tmp_path)
+
+        # Aguardar até o arquivo ficar ACTIVE (processamento do Gemini)
+        max_wait = 60  # segundos
+        poll_interval = 2  # segundos
+        waited = 0
+        while uploaded_file.state and uploaded_file.state.name != "ACTIVE":
+            if uploaded_file.state.name == "FAILED":
+                raise RuntimeError(
+                    f"Upload do vídeo falhou: {uploaded_file.state.name}"
+                )
+            if waited >= max_wait:
+                raise RuntimeError(
+                    f"Timeout aguardando processamento do vídeo "
+                    f"(estado: {uploaded_file.state.name})"
+                )
+            logger.info(
+                "Aguardando processamento do vídeo... (estado: %s, %ds)",
+                uploaded_file.state.name,
+                waited,
+            )
+            await asyncio.sleep(poll_interval)
+            waited += poll_interval
+            uploaded_file = client.files.get(name=uploaded_file.name)
+
+        logger.info("Arquivo de vídeo pronto (estado: ACTIVE)")
+
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],

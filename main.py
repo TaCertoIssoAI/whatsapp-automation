@@ -45,10 +45,26 @@ async def process_message(body: dict) -> None:
             "endpoint_api": config.FACT_CHECK_API_URL,
         }
 
-        logger.info(
-            "Processando mensagem de %s",
-            body.get("data", {}).get("key", {}).get("remoteJid", "unknown"),
-        )
+        data = body.get("data", {})
+        key = data.get("key", {})
+        remote_jid = key.get("remoteJid", "unknown")
+
+        logger.info("Processando mensagem de %s", remote_jid)
+
+        # Log detalhado para mensagens de grupo (ajuda a descobrir BOT_MENTION_JID)
+        if remote_jid.endswith("@g.us"):
+            from nodes.data_extractor import get_context_info
+            context_info = get_context_info(data)
+            mentioned = context_info.get("mentionedJid", [])
+            participant = key.get("participant", "")
+            logger.info(
+                "=== GRUPO === participant=%s, mentionedJid=%s, "
+                "messageType=%s, fromMe=%s",
+                participant,
+                mentioned,
+                data.get("messageType", ""),
+                key.get("fromMe", False),
+            )
 
         result = await workflow.ainvoke(initial_state)
 
@@ -81,6 +97,18 @@ async def webhook_messages_upsert(
         body.get("instance", "unknown"),
         body.get("event", "unknown"),
     )
+
+    # Ignorar mensagens enviadas pelo próprio bot (fromMe) e status broadcast
+    data = body.get("data", {})
+    key = data.get("key", {})
+    if key.get("fromMe", False):
+        logger.info("Ignorando mensagem própria (fromMe=true)")
+        return JSONResponse(content={"status": "ignored"}, status_code=200)
+
+    remote_jid = key.get("remoteJid", "")
+    if remote_jid == "status@broadcast":
+        logger.info("Ignorando status broadcast")
+        return JSONResponse(content={"status": "ignored"}, status_code=200)
 
     # Processa em background para responder rapidamente ao webhook
     background_tasks.add_task(process_message, body)

@@ -17,6 +17,7 @@ import logging
 import struct
 
 from nodes import ai_services, evolution_api, fact_checker
+from nodes.data_extractor import get_context_info
 from state import WorkflowState
 
 logger = logging.getLogger(__name__)
@@ -226,7 +227,7 @@ async def process_image(state: WorkflowState) -> WorkflowState:
     if is_direct:
         caption = data.get("message", {}).get("imageMessage", {}).get("caption", "")
     else:
-        context_info = data.get("contextInfo", {})
+        context_info = get_context_info(data)
         caption = (
             context_info.get("quotedMessage", {})
             .get("imageMessage", {})
@@ -309,7 +310,7 @@ async def process_video(state: WorkflowState) -> WorkflowState:
     if is_direct:
         caption = data.get("message", {}).get("videoMessage", {}).get("caption", "")
     else:
-        context_info = data.get("contextInfo", {})
+        context_info = get_context_info(data)
         caption = (
             context_info.get("quotedMessage", {})
             .get("videoMessage", {})
@@ -389,7 +390,7 @@ async def process_quoted_text(state: WorkflowState) -> WorkflowState:
     chave_api = state.get("chave_api")
     body = state.get("raw_body", {})
     data = body.get("data", {})
-    context_info = data.get("contextInfo", {})
+    context_info = get_context_info(data)
     quoted_text = context_info.get("quotedMessage", {}).get("conversation", "")
 
     await evolution_api.send_text(
@@ -429,7 +430,7 @@ async def process_quoted_image(state: WorkflowState) -> WorkflowState:
     chave_api = state.get("chave_api")
     body = state.get("raw_body", {})
     data = body.get("data", {})
-    context_info = data.get("contextInfo", {})
+    context_info = get_context_info(data)
 
     await evolution_api.send_text(
         instancia,
@@ -491,7 +492,7 @@ async def process_quoted_video(state: WorkflowState) -> WorkflowState:
     chave_api = state.get("chave_api")
     body = state.get("raw_body", {})
     data = body.get("data", {})
-    context_info = data.get("contextInfo", {})
+    context_info = get_context_info(data)
 
     await evolution_api.send_text(
         instancia,

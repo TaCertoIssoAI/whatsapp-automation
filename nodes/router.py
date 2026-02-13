@@ -2,6 +2,7 @@
 
 import logging
 
+from nodes.data_extractor import get_context_info
 from state import WorkflowState
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,8 @@ def detect_quoted_message_type(state: WorkflowState) -> WorkflowState:
     """Detecta o tipo da mensagem citada (quotedMessage) para o Switch9."""
     body = state.get("raw_body", {})
     data = body.get("data", {})
-    context_info = data.get("contextInfo", {})
-    quoted = context_info.get("quotedMessage", {})
+    context_info = get_context_info(data)
+    quoted = context_info.get("quotedMessage") or {}
 
     if not quoted:
         return {"quoted_message_type": "unknown"}  # type: ignore[return-value]

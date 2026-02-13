@@ -8,6 +8,7 @@ import logging
 import unicodedata
 
 import config
+from nodes.data_extractor import get_context_info
 from state import WorkflowState
 
 logger = logging.getLogger(__name__)
@@ -66,13 +67,33 @@ def check_is_mention_of_bot(state: WorkflowState) -> WorkflowState:
     """Verifica se o bot foi mencionado na mensagem do grupo."""
     body = state.get("raw_body", {})
     data = body.get("data", {})
-    context_info = data.get("contextInfo", {})
+    context_info = get_context_info(data)
     mentioned_jids = context_info.get("mentionedJid", [])
 
-    is_mention = (
-        isinstance(mentioned_jids, list)
-        and config.BOT_MENTION_JID in mentioned_jids
-    )
+    if not isinstance(mentioned_jids, list):
+        mentioned_jids = []
+
+    # Log detalhado para ajudar a descobrir o JID correto do bot
+    if mentioned_jids:
+        logger.info(
+            "mentionedJid encontrados: %s (BOT_MENTION_JID configurado: %s)",
+            mentioned_jids,
+            config.BOT_MENTION_JID,
+        )
+
+    # Verificação: compara o JID configurado contra a lista de mencionados
+    # Também extrai apenas a parte numérica para comparação flexível
+    bot_jid = config.BOT_MENTION_JID
+    bot_number = bot_jid.split("@")[0] if bot_jid else ""
+
+    is_mention = False
+    if mentioned_jids:
+        for jid in mentioned_jids:
+            jid_number = jid.split("@")[0] if isinstance(jid, str) else ""
+            if jid == bot_jid or (bot_number and jid_number == bot_number):
+                is_mention = True
+                break
+
     logger.info("isMentionOfTheBot: %s", is_mention)
     return {"is_mention_of_bot": is_mention}  # type: ignore[return-value]
 
@@ -88,7 +109,7 @@ def check_response_to_message(state: WorkflowState) -> WorkflowState:
     """Verifica se a mensagem é uma resposta (tem quotedMessage)."""
     body = state.get("raw_body", {})
     data = body.get("data", {})
-    context_info = data.get("contextInfo", {})
+    context_info = get_context_info(data)
     quoted_message = context_info.get("quotedMessage")
 
     has_quoted = quoted_message is not None and isinstance(quoted_message, dict)
