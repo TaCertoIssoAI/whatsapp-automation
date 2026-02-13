@@ -1,0 +1,3057 @@
+{
+  "name": "fake-news-detector",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "binaryPropertyName": "audio.mp3",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -2160,
+        784
+      ],
+      "id": "8545aeeb-d23a-41d8-944c-e3496dd041f2",
+      "name": "Transcribe a recording2",
+      "credentials": {
+        "openAiApi": {
+          "id": "q8WDpKEXNoVmvump",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "data.base64",
+        "binaryPropertyName": "audio.mp3",
+        "options": {
+          "mimeType": "audio/mpeg"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -3040,
+        784
+      ],
+      "id": "3f09e2ff-3c84-40ae-8a72-4b093ff70654",
+      "name": "Convert to File6"
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "get-media-base64",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3440,
+        784
+      ],
+      "id": "90166a97-e5b6-4c47-946a-5b8414783d47",
+      "name": "Obter m dia em base65",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Pegar dados').item.json.tipoMensagem }}",
+                    "rightValue": "audioMessage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "d3163e93-ba13-4ed6-9af5-c5715f3e93d9"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isAudio"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "389ae815-4779-4f00-8671-7ae235e1c2aa",
+                    "leftValue": "={{ $('Pegar dados').item.json.tipoMensagem }}",
+                    "rightValue": "conversation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isText"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "05bf052d-e5aa-4b19-8368-09737e639190",
+                    "leftValue": "={{ $('Pegar dados').item.json.tipoMensagem }}",
+                    "rightValue": "imageMessage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isImage"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "82c27c18-e74a-46bf-aa3b-eae0264e60ab",
+                    "leftValue": "={{ $('Pegar dados').item.json.tipoMensagem }}",
+                    "rightValue": "stickerMessage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isSticker"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "521cec87-03b0-4c76-be19-59bfdf99abe5",
+                    "leftValue": "={{ $('Pegar dados').item.json.tipoMensagem }}",
+                    "rightValue": "=videoMessage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isVideo"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "032f76a9-d173-448c-8968-0cd60529be70",
+                    "leftValue": "={{ $('Pegar dados').item.json.tipoMensagem }}",
+                    "rightValue": "documentMessage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isDocument"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -4240,
+        1520
+      ],
+      "id": "66eac9b8-d8df-4152-b9a1-23ded3604cf7",
+      "name": "Switch6"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "={{ $json.rationale }}",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -1456,
+        1072
+      ],
+      "id": "0c3eb2fd-c8b5-49b8-a12d-5a2c28c1522d",
+      "name": "Enviar texto19",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "input": "={{ $('HTTP Request13').item.json.responseWithoutLinks}}",
+        "voice": "onyx",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -512,
+        784
+      ],
+      "id": "e608a85b-df6d-4f0a-9057-b245006de387",
+      "name": "Generate audio2",
+      "credentials": {
+        "openAiApi": {
+          "id": "q8WDpKEXNoVmvump",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "binaryToPropery",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        784
+      ],
+      "id": "b0568c6f-cfc8-400d-a75e-ba15a87353c5",
+      "name": "Extract from File2"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-audio",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "media": "={{ $json.data }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        16,
+        784
+      ],
+      "id": "229eccb8-3065-4afe-9101-690c3e4c96c6",
+      "name": "Enviar audio2",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "data.base64",
+        "binaryPropertyName": "imagem",
+        "options": {
+          "mimeType": "image/jpeg"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -3040,
+        1392
+      ],
+      "id": "0ca89fd5-6fc5-4e90-a176-25e85e879bd0",
+      "name": "Convert to File7"
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "read-messages",
+        "instanceName": "={{ $json.instancia }}",
+        "remoteJid": "={{ $json.numeroQuemEnviou }}",
+        "messageId": "={{ $json.idMensagem }}"
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -4464,
+        1584
+      ],
+      "id": "7c296cc0-5819-4737-894f-34a17530f286",
+      "name": "Marcar mensagens como lidas2",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Eu não consigo analisar documentos, você pode enviar um texto, um áudio, uma imagem ou um vídeo para eu analisar.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        1872
+      ],
+      "id": "c70d96d6-db5e-4078-8a41-2a38909331d8",
+      "name": "Enviar texto27",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1fa8e40-179f-49dd-a6cc-fe96739e8e9a",
+              "name": "mensagem",
+              "value": "={{ $('Pegar dados').item.json.mensagem }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3040,
+        1072
+      ],
+      "id": "d3006c87-7162-4a6e-bb46-4e25c427c4af",
+      "name": "Pega Mensagem7"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Estou analisando o áudio para verificar se é fake news. Isso pode levar de 10 segundos a 1 minuto.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        784
+      ],
+      "id": "52fe2e2c-8373-412d-9f3e-1cfe9a48644f",
+      "name": "Enviar texto28",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Estou analisando a mensagem para verificar se é fake news. Isso pode levar de 10 segundos a 1 minuto.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        1072
+      ],
+      "id": "01263f04-45a3-46b0-afc2-059693a5a673",
+      "name": "Enviar texto29",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Estou analisando a imagem para verificar se é fake news. Isso pode levar de 10 segundos a 1 minuto.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        1392
+      ],
+      "id": "c248d66e-5c3a-4dd3-809f-da6dbac3701a",
+      "name": "Enviar texto30",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Pegar dados').item.json.endpointAPI }}/text",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": [\n    {\n      \"textContent\": {{ JSON.stringify($json.mensagem.replace(/\\n/g, ' ')); }},\n      \"type\": \"text\"\n    }\n  ]\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1744,
+        1072
+      ],
+      "id": "d5432aa6-f9b7-47fd-a3ce-10db3d629e05",
+      "name": "HTTP Request8"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Pegar dados').item.json.endpointAPI }}/text",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": [\n    {\n      \"textContent\": {{ JSON.stringify($json.text.replace(/\\n/g, ' ')); }},\n      \"type\": \"audio\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1872,
+        784
+      ],
+      "id": "2eea1f3c-14e4-4b48-bd73-e8d68640233f",
+      "name": "HTTP Request13"
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "get-media-base64",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3440,
+        1632
+      ],
+      "id": "75750080-6482-4032-a1a0-a0f27867000a",
+      "name": "Obter m dia em base4",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Estou analisando o vídeo para verificar se é fake news. Isso pode levar de 10 segundos a 1 minuto.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        1632
+      ],
+      "id": "7281e778-96b0-4f22-b161-761b31e365b2",
+      "name": "Enviar texto33",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "data.base64",
+        "binaryPropertyName": "=video.mp4",
+        "options": {
+          "mimeType": "video/mp4"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -2832,
+        1632
+      ],
+      "id": "a143ae73-817e-4dc0-ba73-7a1afe9403cf",
+      "name": "Convert to File8"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "={{ $json.rationale }}",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -1584,
+        784
+      ],
+      "id": "304b2838-ed69-4c80-924b-2e5a3d47d842",
+      "name": "Enviar texto36",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "🗣️🎤 Estou gravando o aúdio da resposta...",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -1296,
+        784
+      ],
+      "id": "c3357337-1b53-46d6-8711-9bb1646da0f4",
+      "name": "Enviar texto37",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "get-media-base64",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3440,
+        1392
+      ],
+      "id": "2a1db9c2-8fdc-46e1-9168-f47e4d1fe4ff",
+      "name": "Obter m dia em base5",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "base64",
+        "binaryPropertyName": "audio.mp3",
+        "options": {
+          "mimeType": "audio/mpeg"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -3024,
+        2528
+      ],
+      "id": "b71522b4-cde4-46ed-9307-4d3b447f0f8e",
+      "name": "Convert to File9"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo.quotedMessage.audioMessage }}",
+                    "rightValue": "audioMessage",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    },
+                    "id": "d3163e93-ba13-4ed6-9af5-c5715f3e93d9"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isAudio"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "389ae815-4779-4f00-8671-7ae235e1c2aa",
+                    "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo.quotedMessage.conversation }}",
+                    "rightValue": "conversation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isText"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "05bf052d-e5aa-4b19-8368-09737e639190",
+                    "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo.quotedMessage.imageMessage }}",
+                    "rightValue": "imageMessage",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isImage"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "b84e8315-f53c-4d0d-9a45-ef1a8dc200e2",
+                    "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo.quotedMessage.stickerMessage }}",
+                    "rightValue": "isSticker",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isSticker"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "521cec87-03b0-4c76-be19-59bfdf99abe5",
+                    "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo.quotedMessage.videoMessage }}",
+                    "rightValue": "=videoMessage",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isVideo"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "032f76a9-d173-448c-8968-0cd60529be70",
+                    "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo.quotedMessage.documentMessage }}",
+                    "rightValue": "documentMessage",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "isDocument"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -4240,
+        3264
+      ],
+      "id": "c3db8b65-9658-4c99-af39-b7589883c7b4",
+      "name": "Switch9"
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "=base64",
+        "binaryPropertyName": "imagem",
+        "options": {
+          "mimeType": "=image/jpeg"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -3024,
+        3136
+      ],
+      "id": "fcb20e2b-e079-41f7-ad7d-8dc2c472ce0e",
+      "name": "Convert to File10"
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "read-messages",
+        "instanceName": "={{ $json.instancia }}",
+        "remoteJid": "={{ $json.numeroQuemEnviou }}",
+        "messageId": "={{ $json.idMensagem }}"
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -4464,
+        3328
+      ],
+      "id": "73ced7ce-b42c-4630-a110-8225059aa09e",
+      "name": "Marcar mensagens como lidas3",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1fa8e40-179f-49dd-a6cc-fe96739e8e9a",
+              "name": "mensagem",
+              "value": "={{ $('Mensagem recebida').item.json.body.data.contextInfo.quotedMessage.conversation }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3024,
+        2816
+      ],
+      "id": "6769e1b2-239e-4326-94c2-e5f75c4c53c7",
+      "name": "Pega Mensagem10"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Estou analisando o áudio para verificar se é fake news. Isso pode levar de 10 segundos a 1 minuto.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        2528
+      ],
+      "id": "32654f51-69db-4c37-b018-8489c4303fe0",
+      "name": "Enviar texto41",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Estou analisando a mensagem para verificar se é uma fake news ou não.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        2816
+      ],
+      "id": "c6ac74c8-f8e6-457f-8cd8-da8fc265ea05",
+      "name": "Enviar texto42",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Estou analisando a imagem para verificar se é fake news. Isso pode levar de 10 segundos a 1 minuto.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        3136
+      ],
+      "id": "f8bfda15-f88a-44c4-aa93-6c9545e3dad4",
+      "name": "Enviar texto43",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Estou analisando o vídeo para verificar se é fake news. Isso pode levar de 10 segundos a 1 minuto.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        3376
+      ],
+      "id": "72c653f6-d987-49dc-b7eb-35555dfe0c5f",
+      "name": "Enviar texto45",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "base64",
+        "binaryPropertyName": "=video.mp4",
+        "options": {
+          "mimeType": "video/mp4"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -3024,
+        3376
+      ],
+      "id": "9022d4ad-2014-42f0-850e-383ef2d6f18b",
+      "name": "Convert to File11"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://ta-certo-isso-ai-evolution-api.598vvv.easypanel.host/chat/getBase64FromMediaMessage/{{ $('Pegar dados').item.json.instancia }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "={{ $('Pegar dados').item.json.chaveAPI }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"key\": {\n      \"id\": \"{{ $('Pegar dados').item.json.stanzaId }}\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3408,
+        2528
+      ],
+      "id": "1ec203af-cdcb-47ae-8153-1e6b2bb511c8",
+      "name": "HTTP Request25"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d872833f-0a92-402d-b8f6-0aef11777311",
+              "name": "endpointAPI",
+              "value": "https://ta-certo-isso-ai-767652480333.southamerica-east1.run.app",
+              "type": "string"
+            },
+            {
+              "id": "a2684c19-ecf8-4336-905d-385aee7c06eb",
+              "name": "instancia",
+              "value": "={{ $json.body.instance }}",
+              "type": "string"
+            },
+            {
+              "id": "86d6cd66-4fbf-44c5-ac05-d3addccf7ae0",
+              "name": "numeroQuemEnviou",
+              "value": "={{ $json.body.data.key.remoteJid }}",
+              "type": "string"
+            },
+            {
+              "id": "73698167-d83a-4434-b384-895f85e418cd",
+              "name": "nomeQuemEnviou",
+              "value": "={{ $json.body.data.pushName }}",
+              "type": "string"
+            },
+            {
+              "id": "4a7a4195-0a75-49f5-9794-140e969b5cdd",
+              "name": "mensagem",
+              "value": "={{ $json.body.data.message.conversation }}",
+              "type": "string"
+            },
+            {
+              "id": "b45b3ee8-1da5-4420-837e-319744ce52f7",
+              "name": "idMensagem",
+              "value": "={{ $json.body.data.key.id }}",
+              "type": "string"
+            },
+            {
+              "id": "b8631fe4-6675-4c29-b5c0-85d12442beb1",
+              "name": "stanzaId",
+              "value": "={{ $json.body.data.contextInfo.stanzaId }}",
+              "type": "string"
+            },
+            {
+              "id": "c1b18a69-06bc-4f6c-bc49-32af19de6026",
+              "name": "tipoMensagem",
+              "value": "={{ $json.body.data.messageType }}",
+              "type": "string"
+            },
+            {
+              "id": "c434eeaf-2f5e-4d3f-9db0-0e78205fdd12",
+              "name": "chaveAPI",
+              "value": "={{ $json.body.apikey }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -6416,
+        1536
+      ],
+      "id": "6938de6b-2c25-4d3b-b822-73540c679912",
+      "name": "Pegar dados"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://ta-certo-isso-ai-evolution-api.598vvv.easypanel.host/chat/getBase64FromMediaMessage/{{ $('Pegar dados').item.json.instancia }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "={{ $('Pegar dados').item.json.chaveAPI }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"key\": {\n      \"id\": \"{{ $('Pegar dados').item.json.stanzaId }}\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3408,
+        3136
+      ],
+      "id": "f56d9cd1-cc98-4e22-b127-fe0c9f0e7db5",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://ta-certo-isso-ai-evolution-api.598vvv.easypanel.host/chat/getBase64FromMediaMessage/{{ $('Pegar dados').item.json.instancia }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "={{ $('Pegar dados').item.json.chaveAPI }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"key\": {\n      \"id\": \"{{ $('Pegar dados').item.json.stanzaId }}\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3408,
+        3376
+      ],
+      "id": "1091ccdf-543e-4452-8e45-4a955820920f",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "messages-upsert",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -6704,
+        1536
+      ],
+      "id": "ace3ccce-921c-463f-87a9-e3664975abcb",
+      "name": "Mensagem recebida",
+      "webhookId": "10b70ed5-60f9-400b-8889-859e1cba95e3"
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "text": "Você receberá um vídeo enviado pelo usuário. Sua tarefa é:\n\n- Analisar cuidadosamente todas as cenas do vídeo, frame a frame.\n- Descrever detalhadamente tudo o que aparece: pessoas, objetos, ações, ambiente, iluminação, cores, expressões, movimentos, mudanças de cena e qualquer elemento visual relevante.\n- Transcrever todo o áudio do vídeo, incluindo falas, ruídos, música, textos narrados e sons de fundo.\n- Escrever todos os textos que aparecerem na tela, como legendas, placas, banners, telas de computador, mensagens, símbolos ou números.\n- Indicar, sempre que possível, os momentos aproximados (timestamps) onde cada evento ocorre.\n- Caso ocorram várias cenas, descrevê-las em ordem cronológica.\n\nRetorne no seguinte formato:\n\nDescrição completa do vídeo:\n[sua descrição detalhada aqui]",
+        "inputType": "binary",
+        "binaryPropertyName": "video.mp4",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -1200,
+        2016
+      ],
+      "id": "7afa0f00-7f70-435b-bb96-420cf1d1f978",
+      "name": "Analyze video2",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "91Ks9KyrWvBfrkEY",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Pegar dados').item.json.endpointAPI }}/text",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": [\n    {\n      \"textContent\": {{ JSON.stringify($('Dados do vídeo').item.json.description); }},\n      \"type\": \"video\"\n    },\n    {\n      \"textContent\": {{ JSON.stringify($('Dados do vídeo').item.json.caption); }},\n      \"type\": \"text\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        2288
+      ],
+      "id": "9ed6d095-77d0-46e6-91b9-a52dfb8d3017",
+      "name": "HTTP Request18"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "={{ $json.rationale }}",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        144,
+        2288
+      ],
+      "id": "e6e4910d-632a-4b2a-9fee-05f01abb3171",
+      "name": "Enviar texto35",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Pegar dados').item.json.endpointAPI }}/text",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": [\n    {\n      \"textContent\": {{ JSON.stringify($('Dados do vídeo').item.json.description); }},\n      \"type\": \"video\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        2000
+      ],
+      "id": "bb7116af-8da9-4493-ad54-2ee97158b35c",
+      "name": "HTTP Request16"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "={{ $json.rationale }}",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        144,
+        2000
+      ],
+      "id": "d0a6e3b7-e323-46d2-8008-7c145ccebc31",
+      "name": "Enviar texto34",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Pegar dados').item.json.endpointAPI }}/text",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": [\n    {\n      \"textContent\": {{ JSON.stringify($('Dados da imagem').item.json.description); }},\n      \"type\": \"image\"\n    },\n    {\n      \"textContent\": {{ JSON.stringify($('Dados da imagem').item.json.caption); }},\n      \"type\": \"text\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        1680
+      ],
+      "id": "bfa0464b-10a0-4c14-8c43-386ee3bdc52d",
+      "name": "HTTP Request15"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "={{ $json.rationale }}",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        64,
+        1680
+      ],
+      "id": "d1ff8b6f-d1d6-4868-aa8c-c71503fe569d",
+      "name": "Enviar texto32",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "={{ $json.rationale }}",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        64,
+        1392
+      ],
+      "id": "62dcb555-9bea-45df-a135-48e223158f03",
+      "name": "Enviar texto26",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Eu não consigo analisar documentos, você pode enviar um texto, um áudio, uma imagem ou um vídeo para eu analisar.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -3840,
+        3616
+      ],
+      "id": "b8d9e6b0-bce4-42e5-86ee-74101ff94eb4",
+      "name": "Enviar texto40",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b76dd329-670b-4071-a1e2-2091936ba176",
+              "leftValue": "={{ $json.caption }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -640,
+        1408
+      ],
+      "id": "546e9daa-89ff-448f-b577-7dc00cacb485",
+      "name": "imagem tem legenda"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b76dd329-670b-4071-a1e2-2091936ba176",
+              "leftValue": "={{ $json.caption }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -560,
+        2016
+      ],
+      "id": "23bc61cd-fda3-4161-bf63-934079ea82fd",
+      "name": "video tem legenda"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8ae3e2d8-4b9e-4819-9d65-cfd11def0842",
+              "name": "caption",
+              "value": "={{\n  $if(\n    $('Mensagem recebida').item.json.body.data.key.remoteJid.endsWith('@s.whatsapp.net'),\n    (\n      $('Mensagem recebida').item.json.body.data.message?.imageMessage?.caption \n      ?? \n      \"\"\n    ),\n    (\n      $('Mensagem recebida').item.json.body.data.contextInfo?.quotedMessage?.imageMessage?.caption \n      ?? \n      \"\"\n    )\n  )\n}}",
+              "type": "string"
+            },
+            {
+              "id": "9df9dbfe-334a-4232-b88d-9fd2523614a9",
+              "name": "description",
+              "value": "={{ $json.content }}\n\nInformações de pesquisa reversa da imagem em sites da web: \n{{ $json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -832,
+        1408
+      ],
+      "id": "b09162f2-5460-40d5-b52e-8e915ec4de5e",
+      "name": "Dados da imagem"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8962be6f-3011-4f60-89a6-ab5171e862c7",
+              "name": "description",
+              "value": "={{ $json.content.parts[0].text }}",
+              "type": "string"
+            },
+            {
+              "id": "8ae3e2d8-4b9e-4819-9d65-cfd11def0842",
+              "name": "caption",
+              "value": "={{\n  $if(\n    $('Mensagem recebida').item.json.body.data.key.remoteJid.endsWith('@s.whatsapp.net'),\n    (\n      $('Mensagem recebida').item.json.body.data.message?.videoMessage?.caption \n      ?? \n      \"\"\n    ),\n    (\n      $('Mensagem recebida').item.json.body.data.contextInfo?.quotedMessage?.videoMessage?.caption \n      ?? \n      \"\"\n    )\n  )\n}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -848,
+        2016
+      ],
+      "id": "5447549f-7d62-4a51-b060-80671ef35ee0",
+      "name": "Dados do vídeo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5ea95191-0e78-432f-8134-ffbf2b2d6014",
+              "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo?.mentionedJid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "75e66cf0-8418-433c-aba9-766d06e9e9bd",
+              "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo?.mentionedJid }}",
+              "rightValue": "117558187450509@lid",
+              "operator": {
+                "type": "array",
+                "operation": "contains",
+                "rightType": "any"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5504,
+        1856
+      ],
+      "id": "be46d532-2842-4ce0-bb9f-6b3e73373b42",
+      "name": "isMentionOfTheBot"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "efd4d22b-f089-4dbd-8c09-1b8755f1b328",
+              "leftValue": "={{ $('Mensagem recebida').item.json.body.data.contextInfo?.quotedMessage }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4976,
+        2208
+      ],
+      "id": "dd4ea00a-d814-4160-a81b-4e98455303e7",
+      "name": "isResponseToMessage"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "315034ac-1a26-46a3-b09f-174b5e798aa6",
+              "name": "instancia",
+              "value": "={{ $('Pegar dados').item.json.instancia }}",
+              "type": "string"
+            },
+            {
+              "id": "01e8aa44-391e-485d-9a37-5cc8da335c47",
+              "name": "numeroQuemEnviou",
+              "value": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "56086911-1f65-4efc-b82a-8af014a9299b",
+      "name": "Dados para sub-workflow"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "315034ac-1a26-46a3-b09f-174b5e798aa6",
+              "name": "instancia",
+              "value": "={{ $('Pegar dados').item.json.instancia }}",
+              "type": "string"
+            },
+            {
+              "id": "01e8aa44-391e-485d-9a37-5cc8da335c47",
+              "name": "numeroQuemEnviou",
+              "value": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -416,
+        240
+      ],
+      "id": "52841cf5-c187-4c25-b791-941dcdd2989f",
+      "name": "Dados para sub-workflow1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b00bcaf3-ee02-4846-945f-9e8ace32b989",
+              "leftValue": "={{ $('Mensagem recebida').item.json.body.data.key.remoteJid }}",
+              "rightValue": "@g.us",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6128,
+        1536
+      ],
+      "id": "229275db-a5a3-4113-874e-778fbb09377c",
+      "name": "isOnGroup"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "fznAeq3o9uJT75z3RGTPA",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/fznAeq3o9uJT75z3RGTPA",
+          "cachedResultName": "reverse-search"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -1264,
+        1584
+      ],
+      "id": "5170bb96-cf46-4067-84e0-4cadade8f913",
+      "name": "Execute Workflow1"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1024,
+        1408
+      ],
+      "id": "dabad09d-9727-483d-84e6-b981372252d7",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Pegar dados').item.json.endpointAPI }}/text",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": [\n    {\n      \"textContent\": {{ JSON.stringify($('Dados da imagem').item.json.description); }},\n      \"type\": \"image\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        1392
+      ],
+      "id": "ab918a79-eae6-47ae-a5c3-c25319ad8f7c",
+      "name": "HTTP Request23",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "FAWcDPz57qYJ0r6NczMHO",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/FAWcDPz57qYJ0r6NczMHO",
+          "cachedResultName": "analyze-image"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -1264,
+        1392
+      ],
+      "id": "0e613b8e-7185-4e9a-a9c6-a86a904689dc",
+      "name": "Execute Workflow2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7e396159-7d96-4c45-9f1e-8f19b292f861",
+              "leftValue": "={{ $json.duration }}",
+              "rightValue": 120,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2032,
+        1776
+      ],
+      "id": "0ebb8d6b-4d64-4eb0-8c9f-86853ea83d3a",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Para que eu possa analizar o conteúdo do vídeo, ele precisa ter uma duração máxima de 2 minutos.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -1200,
+        2240
+      ],
+      "id": "a1dacf3f-3b47-40d8-8fdc-b8983e09acb6",
+      "name": "Enviar texto",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function getMp4DurationFromBase64(base64) {\n    const buffer = Buffer.from(base64, \"base64\");\n\n    let offset = 0;\n\n    while (offset < buffer.length) {\n        const size = buffer.readUInt32BE(offset);\n        const type = buffer.toString(\"ascii\", offset + 4, offset + 8);\n\n        // Procurar o box 'moov'\n        if (type === \"moov\") {\n            let moovOffset = offset + 8;\n            const moovEnd = offset + size;\n\n            while (moovOffset < moovEnd) {\n                const boxSize = buffer.readUInt32BE(moovOffset);\n                const boxType = buffer.toString(\"ascii\", moovOffset + 4, moovOffset + 8);\n\n                // Procurar 'mvhd'\n                if (boxType === \"mvhd\") {\n                    const version = buffer[moovOffset + 8];\n\n                    let timescale, duration;\n\n                    if (version === 0) {\n                        timescale = buffer.readUInt32BE(moovOffset + 20);\n                        duration = buffer.readUInt32BE(moovOffset + 24);\n                    } else {\n                        timescale = buffer.readUInt32BE(moovOffset + 28);\n                        duration = Number(buffer.readBigUInt64BE(moovOffset + 32));\n                    }\n\n                    return Number(duration) / timescale;\n                }\n\n                moovOffset += boxSize;\n            }\n        }\n\n        offset += size;\n    }\n\n    throw new Error(\"mvhd not found in MP4\");\n}\n\n//\n// PEGAR O BASE64 DO PRIMEIRO ITEM\n//\nconst input = $input.first();\nconst base64 = input.json.data?.base64 || input.json.base64;\n\nconst duration = getMp4DurationFromBase64(base64);\n\nreturn [\n    {\n        json: { duration }\n    }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2832,
+        1840
+      ],
+      "id": "002c0ba2-e63c-4a23-acb6-6422cca5af51",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -2304,
+        1776
+      ],
+      "id": "dc749a93-b611-48c6-aec8-6fa880eca0fd",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c5b1f96f-11b4-40c2-abe3-dfec04827442",
+              "leftValue": "={{ $json.mensagem }}",
+              "rightValue": "tacertoissoai.com.br/termos-e-privacidade",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -5504,
+        1552
+      ],
+      "id": "03289c96-3e5b-445b-afdb-724d2923d86b",
+      "name": "se é mensagem inicial do bot"
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "read-messages",
+        "instanceName": "={{ $json.instancia }}",
+        "remoteJid": "={{ $json.numeroQuemEnviou }}",
+        "messageId": "={{ $json.idMensagem }}"
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -5216,
+        1168
+      ],
+      "id": "874da283-f314-4a2c-a3c8-cb11eb366833",
+      "name": "Marcar mensagens como lidas",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const mensagem = item.json.mensagem || \"\";\n\n  const normalizada = mensagem\n    .toLowerCase()\n    .normalize(\"NFD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\")\n    .trim();\n\n  const saudacoes = [\n    \"oi\",\n    \"ola\",\n    \"eai\",\n    \"iae\",\n    \"iai\",\n    \"fala\",\n    \"fala ai\",\n    \"fala ae\",\n    \"bom dia\",\n    \"boa tarde\",\n    \"boa noite\",\n    \"opa\",\n    \"salve\",\n    \"alo\",\n    \"oii\",\n    \"oiii\",\n    \"ola tudo bem\",\n    \"oi tudo bem\",\n    \"bom dia tudo bem\",\n    \"boa tarde tudo bem\",\n    \"boa noite tudo bem\"\n  ];\n\n  item.json.ehSaudacao = saudacoes.includes(normalizada);\n\n  return item;\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5232,
+        1568
+      ],
+      "id": "ec0ebb46-d65b-496b-9d05-11cfdea50fb2",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "380da424-df6a-4dcb-b83b-2a6c67a31f8f",
+              "leftValue": "={{ $json.ehSaudacao }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4992,
+        1568
+      ],
+      "id": "223f4308-2cab-4047-a74a-cab1d5755298",
+      "name": "se é saudação"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Pegar dados').item.json.instancia }}",
+        "remoteJid": "={{ $('Pegar dados').item.json.numeroQuemEnviou }}",
+        "messageText": "=Vc pode enviar a mensagem, imagem, vídeo, link ou áudio que quer verificar.",
+        "options_message": {
+          "quoted": {
+            "messageQuoted": {
+              "messageId": "={{ $('Pegar dados').item.json.idMensagem }}"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -4528,
+        1184
+      ],
+      "id": "56d2f4b6-e700-479e-adad-a2ad009afb9f",
+      "name": "Enviar texto38",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "read-messages",
+        "instanceName": "={{ $json.instancia }}",
+        "remoteJid": "={{ $json.numeroQuemEnviou }}",
+        "messageId": "={{ $json.idMensagem }}"
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -4720,
+        1184
+      ],
+      "id": "9ab1d269-48ff-4d91-a92b-ab27e52ca1dd",
+      "name": "Marcar mensagens como lidas1",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ohw-99QUCzTEQSoJ6zriK",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/ohw-99QUCzTEQSoJ6zriK",
+          "cachedResultName": "digitando"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        0
+      ],
+      "id": "b6706921-73b6-4eee-ba88-0d3ccc3c330a",
+      "name": "Call 'digitando'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "tsHypUoLd15G44Rtn3Gg1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/tsHypUoLd15G44Rtn3Gg1",
+          "cachedResultName": "gravando"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -176,
+        240
+      ],
+      "id": "513b0906-5924-4215-926d-10228cdefe2e",
+      "name": "Call 'gravando'"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        144,
+        560
+      ],
+      "id": "4d2ee3eb-d25f-4d4f-b14b-f75a52f91859",
+      "name": "Send message",
+      "webhookId": "d6c6b50c-1508-4f23-9972-87ebfcdab7c1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Transcribe a recording2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request13",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Dados para sub-workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File6": {
+      "main": [
+        [
+          {
+            "node": "Transcribe a recording2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obter m dia em base65": {
+      "main": [
+        [
+          {
+            "node": "Convert to File6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch6": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto28",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto29",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto30",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto30",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto33",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto27",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate audio2": {
+      "main": [
+        [
+          {
+            "node": "Extract from File2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File2": {
+      "main": [
+        [
+          {
+            "node": "Enviar audio2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File7": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar mensagens como lidas2": {
+      "main": [
+        [
+          {
+            "node": "Switch6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pega Mensagem7": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request8",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Dados para sub-workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto28": {
+      "main": [
+        [
+          {
+            "node": "Obter m dia em base65",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto29": {
+      "main": [
+        [
+          {
+            "node": "Pega Mensagem7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto30": {
+      "main": [
+        [
+          {
+            "node": "Obter m dia em base5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request8": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto19",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request13": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto36",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obter m dia em base4": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Convert to File8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto33": {
+      "main": [
+        [
+          {
+            "node": "Obter m dia em base4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File8": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto36": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto37",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto37": {
+      "main": [
+        [
+          {
+            "node": "Dados para sub-workflow1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate audio2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obter m dia em base5": {
+      "main": [
+        [
+          {
+            "node": "Convert to File7",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute Workflow1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File9": {
+      "main": [
+        [
+          {
+            "node": "Transcribe a recording2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch9": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto41",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto42",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto43",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto43",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto45",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto40",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File10": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar mensagens como lidas3": {
+      "main": [
+        [
+          {
+            "node": "Switch9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pega Mensagem10": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request8",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Dados para sub-workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto41": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request25",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto42": {
+      "main": [
+        [
+          {
+            "node": "Pega Mensagem10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto43": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto45": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File11": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request25": {
+      "main": [
+        [
+          {
+            "node": "Convert to File9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pegar dados": {
+      "main": [
+        [
+          {
+            "node": "isOnGroup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Convert to File10",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute Workflow1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Convert to File11",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensagem recebida": {
+      "main": [
+        [
+          {
+            "node": "Pegar dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze video2": {
+      "main": [
+        [
+          {
+            "node": "Dados do vídeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request18": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto35",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request16": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto34",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request15": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto32",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "imagem tem legenda": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request23",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request15",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "video tem legenda": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request16",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request18",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dados da imagem": {
+      "main": [
+        [
+          {
+            "node": "imagem tem legenda",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Dados para sub-workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dados do vídeo": {
+      "main": [
+        [
+          {
+            "node": "video tem legenda",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Dados para sub-workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "isMentionOfTheBot": {
+      "main": [
+        [
+          {
+            "node": "isResponseToMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "isResponseToMessage": {
+      "main": [
+        [
+          {
+            "node": "Marcar mensagens como lidas3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Marcar mensagens como lidas2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dados para sub-workflow": {
+      "main": [
+        [
+          {
+            "node": "Call 'digitando'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dados para sub-workflow1": {
+      "main": [
+        [
+          {
+            "node": "Call 'gravando'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "isOnGroup": {
+      "main": [
+        [
+          {
+            "node": "isMentionOfTheBot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "se é mensagem inicial do bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Dados da imagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HTTP Request23": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto26",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Analyze video2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "se é mensagem inicial do bot": {
+      "main": [
+        [
+          {
+            "node": "Marcar mensagens como lidas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "se é saudação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "se é saudação": {
+      "main": [
+        [
+          {
+            "node": "Marcar mensagens como lidas1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Marcar mensagens como lidas2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar mensagens como lidas1": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto38",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "cbac1492-aed7-4da1-972a-c1d352a9c7a4",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bbba8c37f2323ef0c54b4d1c5364eab74987004553e70a0ae0fc4cf8de035a11"
+  },
+  "id": "vfbtJIr8cwCmAh5XvRXsN",
+  "tags": []
+}

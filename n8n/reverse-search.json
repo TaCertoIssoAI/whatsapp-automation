@@ -1,0 +1,131 @@
+{
+  "name": "reverse-search",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "7ffff1b3-fa24-4d47-8405-82edc9059004",
+      "typeVersion": 1.1,
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -1424,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.bing.microsoft.com/v7.0/images/visualsearch",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "multipart/form-data"
+            },
+            {
+              "name": "Ocp-Apim-Subscription-Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1296,
+        416
+      ],
+      "id": "99943ad2-e7d5-42ea-83fb-e45da0f7b118",
+      "name": "HTTP Request2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vision.googleapis.com/v1/images:annotate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"requests\": [\n    {\n      \"image\": {\n        \"content\": \"{{ $json.data?.base64 || $json.base64 }}\"\n      },\n      \"features\": [\n        {\n          \"type\": \"WEB_DETECTION\"\n        }\n      ]\n    }\n  ]\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1120,
+        112
+      ],
+      "id": "a3de9a9f-8fad-4082-aac0-11772a676131",
+      "name": "HTTP Request",
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "qW3kJD7SZmRdHJzC",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = items[0].json;\n\n// Acessa o webDetection corretamente\nconst detection = data?.responses?.[0]?.webDetection;\n\n// Se não tiver fullMatchingImages → resposta padrão\nif (!detection || !detection.fullMatchingImages || detection.fullMatchingImages.length === 0) {\n  return [\n    {\n      json: {\n        text: \"Nenhuma correspondência completa encontrada para esta imagem.\"\n      }\n    }\n  ];\n}\n\n// ---- Web Entities ----\nlet entitiesText = \"Entidades Detectadas:\\n\";\nif (detection.webEntities?.length) {\n  detection.webEntities.forEach(e => {\n    if (e.description) entitiesText += `- ${e.description}\\n`;\n  });\n} else {\n  entitiesText += \"- Nenhuma entidade encontrada.\\n\";\n}\n\n// ---- Pages With Matching Images (somente 3 primeiras) ----\nlet pagesText = \"\\nPáginas com Imagens Correspondentes:\\n\";\n\nif (detection.pagesWithMatchingImages?.length) {\n  detection.pagesWithMatchingImages\n    .slice(0, 3) // <= apenas os 3 primeiros\n    .forEach(p => {\n      if (p.pageTitle) pagesText += `- ${p.pageTitle}\\n`;\n    });\n} else {\n  pagesText += \"- Nenhuma página encontrada.\\n\";\n}\n\n// Texto final\nconst finalText = entitiesText + pagesText;\n\nreturn [\n  {\n    json: {\n      text: finalText\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        112
+      ],
+      "id": "1a705980-c785-4f35-824f-6159d1366c99",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "1295531e-e00a-4305-aaef-804d94cfe571",
+  "meta": {
+    "instanceId": "bbba8c37f2323ef0c54b4d1c5364eab74987004553e70a0ae0fc4cf8de035a11"
+  },
+  "id": "fznAeq3o9uJT75z3RGTPA",
+  "tags": []
+}

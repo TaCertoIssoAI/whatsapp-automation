@@ -1,0 +1,92 @@
+{
+  "name": "digitando",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "9dbbfa60-5b56-469c-8798-9d27db9bfb46",
+      "typeVersion": 1.1,
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -1424,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "send-presence",
+        "instanceName": "={{ $json.instancia }}",
+        "remoteJid": "={{ $json.numeroQuemEnviou }}",
+        "delay": 15000
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -816,
+        112
+      ],
+      "id": "6069800d-fbe1-40fa-a8bd-39f0b31bdbfd",
+      "name": "Enviar presen a",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -1120,
+        112
+      ],
+      "id": "02a2f486-0013-4c63-83d5-df0910f2f55f",
+      "name": "Wait",
+      "webhookId": "fc99f15c-ba85-4d89-a654-261bc9e94ac6"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Enviar presen a",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "4546ca62-1a1d-46fe-967c-376cc488aa9a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bbba8c37f2323ef0c54b4d1c5364eab74987004553e70a0ae0fc4cf8de035a11"
+  },
+  "id": "ohw-99QUCzTEQSoJ6zriK",
+  "tags": []
+}

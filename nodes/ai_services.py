@@ -1,0 +1,290 @@
+"""Serviços de inteligência artificial.
+
+- OpenAI Whisper (transcrição de áudio)
+- OpenAI TTS (text-to-speech, voz onyx)
+- OpenAI GPT-4o-mini (análise de imagem — sub-workflow analyze-image)
+- Google Gemini (análise de vídeo)
+- Google Cloud Vision API (reverse image search — sub-workflow reverse-search)
+"""
+
+import base64
+import logging
+import tempfile
+from pathlib import Path
+
+import httpx
+
+import config
+
+logger = logging.getLogger(__name__)
+
+
+# ──────────────────────── OpenAI — Transcrição ────────────────────────
+
+
+async def transcribe_audio(audio_base64: str) -> str:
+    """Transcreve áudio usando OpenAI Whisper.
+
+    Recebe o áudio em base64, salva em arquivo temporário e envia para a API.
+    Equivalente ao nó 'Transcribe a recording2' do n8n.
+    """
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+
+    audio_bytes = base64.b64decode(audio_base64)
+
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = Path(tmp.name)
+
+    try:
+        with open(tmp_path, "rb") as audio_file:
+            transcript = await client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+            )
+        logger.info("Áudio transcrito com sucesso (%d chars)", len(transcript.text))
+        return transcript.text
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+# ──────────────────────── OpenAI — TTS ────────────────────────
+
+
+async def generate_tts(text: str) -> str:
+    """Gera áudio via OpenAI TTS (voz onyx).
+
+    Retorna o áudio em base64.
+    Equivalente ao nó 'Generate audio2' do n8n.
+    """
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+
+    response = await client.audio.speech.create(
+        model="tts-1",
+        voice="onyx",
+        input=text,
+    )
+
+    audio_bytes = response.content
+    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+    logger.info("TTS gerado com sucesso (%d bytes)", len(audio_bytes))
+    return audio_b64
+
+
+# ──────────────────────── Google Gemini — Análise de Vídeo ────────────────────────
+
+# Prompt para análise de vídeo (mesmo do n8n)
+VIDEO_ANALYSIS_PROMPT = """Você receberá um vídeo enviado pelo usuário. Sua tarefa é:
+
+- Analisar cuidadosamente todas as cenas do vídeo, frame a frame.
+- Descrever detalhadamente tudo o que aparece: pessoas, objetos, ações, ambiente, iluminação, cores, expressões, movimentos, mudanças de cena e qualquer elemento visual relevante.
+- Transcrever todo o áudio do vídeo, incluindo falas, ruídos, música, textos narrados e sons de fundo.
+- Escrever todos os textos que aparecerem na tela, como legendas, placas, banners, telas de computador, mensagens, símbolos ou números.
+- Indicar, sempre que possível, os momentos aproximados (timestamps) onde cada evento ocorre.
+- Caso ocorram várias cenas, descrevê-las em ordem cronológica.
+
+Retorne no seguinte formato:
+
+Descrição completa do vídeo:
+[sua descrição detalhada aqui]"""
+
+
+async def analyze_video(video_base64: str) -> str:
+    """Analisa vídeo usando Google Gemini 2.5 Flash.
+
+    Recebe o vídeo em base64, envia para o Gemini e retorna a descrição.
+    Equivalente ao nó 'Analyze video2' do n8n.
+    """
+    from google import genai
+
+    client = genai.Client(api_key=config.GOOGLE_GEMINI_API_KEY)
+
+    video_bytes = base64.b64decode(video_base64)
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        tmp.write(video_bytes)
+        tmp_path = Path(tmp.name)
+
+    try:
+        uploaded_file = client.files.upload(file=tmp_path)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
+        )
+        description = response.text or ""
+        logger.info("Vídeo analisado com sucesso (%d chars)", len(description))
+        return description
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+# ──────────────────────── OpenAI GPT-4o-mini — Análise de Imagem ──────
+# Equivalente ao sub-workflow 'analyze-image' do n8n
+
+
+# Prompt EXATO do nó 'Analyze image2' do n8n
+IMAGE_ANALYSIS_PROMPT = (
+    "Você receberá uma imagem enviada pelo usuário, seu objetivo é transcrever "
+    "a imagem enviada para o fact-checking de fake news seguindo as tarefas "
+    "adiantes:  TAREFA 1: Você deve transcrever todo o texto de uma imagem, "
+    "focando não apenas no texto mas em como ele está visualmente disposto "
+    "(letras grandes, pequenas, CAPS LOCK ,negrito, itálico, cores). "
+    'Ex: A imagem tem um título "Político perdeu tudo" em negrito e CAPS LOCK '
+    "com letras grandes. TAREFA 2: Foque em transcrever elementos visuais/"
+    "não-textuais  da imagem de forma a explicitar pessoas, especialmente "
+    "figuras famosas, históricas, importantes, políticos ou celebridades, "
+    "caso essas figuras estejam presentes, apenas mencione o NOME delas, "
+    "não qualquer status dela como sua posição, emprego, se está vivo ou não. "
+    "Também busque descrever entidades humanas e não humanas centrais à imagem."
+    "\n\nNão dê tanto importância a detalhes cotidianos e comuns da paisagem, "
+    "apenas em detalhes anormais que possam auxiliar no processo de fact-checking."
+    "\n\nExemplos de descrições detalhadas que ajudam no fact-checking de fake news:"
+    '\n\n"A imagem mostra o político Abraham Lincon numa pose constrangedora, '
+    'sendo zombado por uma multidão"'
+    "\n\nExemplo de uma descrição que não ajuda no fact-checking:"
+    '\n\n"A imagem mostra um homem de terno e cabelo branco, numa festa, '
+    'com convidados de smoking."'
+    "\n\nRetornar no seguinte formato:"
+    '\n\n"Descrição da imagem: [sua descrição detalhada aqui]'
+    "\n\nLembre-se de adicionar na descrição da imagem todo o texto contido nela."
+)
+
+
+async def analyze_image_content(image_base64: str) -> str:
+    """Analisa imagem usando OpenAI GPT-4o-mini.
+
+    Equivalente ao sub-workflow 'analyze-image' do n8n.
+    Usa o mesmo modelo (gpt-4o-mini) e prompt exato do n8n.
+    """
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": IMAGE_ANALYSIS_PROMPT,
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}",
+                        },
+                    },
+                ],
+            }
+        ],
+    )
+
+    analysis = response.choices[0].message.content or ""
+    logger.info("Imagem analisada com sucesso via GPT-4o-mini (%d chars)", len(analysis))
+    return analysis
+
+
+# ──────────────────────── Google Cloud Vision — Reverse Image Search ──────
+# Equivalente ao sub-workflow 'reverse-search' do n8n
+
+_VISION_API_URL = "https://vision.googleapis.com/v1/images:annotate"
+_VISION_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+
+
+def _parse_web_detection(response_data: dict) -> str:
+    """Parseia a resposta da Google Cloud Vision API WEB_DETECTION.
+
+    Equivalente ao 'Code in JavaScript' do sub-workflow reverse-search do n8n.
+    """
+    detection = (
+        response_data
+        .get("responses", [{}])[0]
+        .get("webDetection")
+    )
+
+    if (
+        not detection
+        or not detection.get("fullMatchingImages")
+        or len(detection["fullMatchingImages"]) == 0
+    ):
+        return "Nenhuma correspondência completa encontrada para esta imagem."
+
+    # Web Entities
+    entities_text = "Entidades Detectadas:\n"
+    web_entities = detection.get("webEntities", [])
+    if web_entities:
+        for entity in web_entities:
+            desc = entity.get("description")
+            if desc:
+                entities_text += f"- {desc}\n"
+    else:
+        entities_text += "- Nenhuma entidade encontrada.\n"
+
+    # Pages With Matching Images (somente 3 primeiras, igual ao n8n)
+    pages_text = "\nPáginas com Imagens Correspondentes:\n"
+    pages = detection.get("pagesWithMatchingImages", [])
+    if pages:
+        for page in pages[:3]:
+            title = page.get("pageTitle")
+            if title:
+                pages_text += f"- {title}\n"
+    else:
+        pages_text += "- Nenhuma página encontrada.\n"
+
+    return entities_text + pages_text
+
+
+async def reverse_image_search(image_base64: str) -> str:
+    """Realiza pesquisa reversa de imagem usando Google Cloud Vision API.
+
+    Equivalente ao sub-workflow 'reverse-search' do n8n.
+    Usa o endpoint WEB_DETECTION da Vision API com OAuth2/API key.
+    """
+    api_key = config.GOOGLE_CLOUD_API_KEY
+    if not api_key:
+        logger.warning(
+            "GOOGLE_CLOUD_API_KEY não configurada, "
+            "pulando reverse image search."
+        )
+        return "Pesquisa reversa não disponível (API key não configurada)."
+
+    url = f"{_VISION_API_URL}?key={api_key}"
+
+    payload = {
+        "requests": [
+            {
+                "image": {
+                    "content": image_base64,
+                },
+                "features": [
+                    {
+                        "type": "WEB_DETECTION",
+                    }
+                ],
+            }
+        ]
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=_VISION_TIMEOUT) as client:
+            resp = await client.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+        parsed = _parse_web_detection(result)
+        logger.info("Reverse image search concluída (%d chars)", len(parsed))
+        return parsed
+
+    except Exception as e:
+        logger.warning("Reverse image search falhou: %s", e)
+        return "Não foi possível realizar a pesquisa reversa da imagem."

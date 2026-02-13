@@ -1,0 +1,74 @@
+{
+  "name": "analyze-image",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "773905e3-520b-48cf-9680-2e1d0a190685",
+      "typeVersion": 1.1,
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -1424,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "text": "=Você receberá uma imagem enviada pelo usuário, seu objetivo é transcrever a imagem enviada para o fact-checking de fake news seguindo as tarefas  adiantes:  TAREFA 1: Você deve transcrever todo o texto de uma imagem, focando não apenas no texto mas em como ele está visualmente disposto (letras grandes, pequenas, CAPS LOCK ,negrito, itálico, cores). Ex: A imagem tem um título “Político perdeu tudo” em negrito e CAPS LOCK com letras grandes. TAREFA 2: Foque em transcrever elementos visuais/não-textuais  da imagem de forma a explicitar pessoas, especialmente figuras famosas, históricas, importantes, políticos ou celebridades, caso essas figuras estejam presentes, apenas mencione o NOME delas, não qualquer status dela como sua posição, emprego, se está vivo ou não. Também busque descrever entidades humanas e não humanas centrais à imagem.\n\nNão dê tanto importância a detalhes cotidianos e comuns da paisagem, apenas em detalhes anormais que possam auxiliar no processo de fact-checking.\n\nExemplos de descrições detalhadas que ajudam no fact-checking de fake news:\n\n\"A imagem mostra o político Abraham Lincon numa pose constrangedora, sendo zombado por uma multidão\"\n\nExemplo de uma descrição que não ajuda no fact-checking:\n\n\"A imagem mostra um homem de terno e cabelo branco, numa festa, com convidados de smoking.\"\n\nRetornar no seguinte formato:\n\n\"Descrição da imagem: [sua descrição detalhada aqui]\n\nLembre-se de adicionar na descrição da imagem todo o texto contido nela.",
+        "inputType": "base64",
+        "binaryPropertyName": "imagem",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -1232,
+        688
+      ],
+      "id": "7206351b-1917-4fc8-ba49-b98963a6639c",
+      "name": "Analyze image2",
+      "credentials": {
+        "openAiApi": {
+          "id": "q8WDpKEXNoVmvump",
+          "name": "OpenAi account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Analyze image2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "b49b06d9-14a3-40b0-af8b-33277649fd90",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bbba8c37f2323ef0c54b4d1c5364eab74987004553e70a0ae0fc4cf8de035a11"
+  },
+  "id": "FAWcDPz57qYJ0r6NczMHO",
+  "tags": []
+}

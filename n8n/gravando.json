@@ -1,0 +1,93 @@
+{
+  "name": "gravando",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "cdcaccd3-4a6d-46e7-8649-5e4c65602ffb",
+      "typeVersion": 1.1,
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -1424,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat-api",
+        "operation": "send-presence",
+        "instanceName": "={{ $json.instancia }}",
+        "remoteJid": "={{ $json.numeroQuemEnviou }}",
+        "presence": "recording",
+        "delay": 5000
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -816,
+        688
+      ],
+      "id": "87651c54-bb70-4f26-a32e-1dbd151a7e26",
+      "name": "Enviar presen a",
+      "credentials": {
+        "evolutionApi": {
+          "id": "kx6VEBzZVI37SZ47",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -1120,
+        688
+      ],
+      "id": "20b9823a-25b7-428b-a898-aedfce4926da",
+      "name": "Wait",
+      "webhookId": "fc99f15c-ba85-4d89-a654-261bc9e94ac6"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Enviar presen a",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "ee1e83a7-8970-48cd-874a-a5eb383b7d3a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bbba8c37f2323ef0c54b4d1c5364eab74987004553e70a0ae0fc4cf8de035a11"
+  },
+  "id": "tsHypUoLd15G44Rtn3Gg1",
+  "tags": []
+}
