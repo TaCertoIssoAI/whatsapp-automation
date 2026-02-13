@@ -94,13 +94,14 @@ async def mark_as_read(
         "readMessages": [
             {
                 "remoteJid": remote_jid,
+                "fromMe": False,
                 "id": message_id,
             }
         ]
     }
 
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.put(url, json=body, headers=_headers(api_key))
+        resp = await client.post(url, json=body, headers=_headers(api_key))
         resp.raise_for_status()
         logger.info("Mensagem %s marcada como lida", message_id)
         return resp.json()
@@ -163,10 +164,12 @@ async def send_presence(
     Args:
         delay: Tempo em segundos para manter a presença (simula o delay do n8n).
     """
-    url = f"{_base_url()}/chat/updatePresence/{instance}"
+    url = f"{_base_url()}/chat/sendPresence/{instance}"
+    delay_ms = int(delay * 1000) if delay > 0 else 1000
     body = {
         "number": remote_jid,
         "presence": presence,
+        "delay": delay_ms,
     }
 
     try:
@@ -174,7 +177,7 @@ async def send_presence(
         await asyncio.sleep(1)
 
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.put(url, json=body, headers=_headers(api_key))
+            resp = await client.post(url, json=body, headers=_headers(api_key))
             resp.raise_for_status()
             logger.info("Presença '%s' enviada para %s", presence, remote_jid)
 

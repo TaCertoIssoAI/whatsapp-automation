@@ -18,7 +18,10 @@ def extract_data(state: WorkflowState) -> WorkflowState:
         "instancia": body.get("instance", ""),
         "numero_quem_enviou": key.get("remoteJid", ""),
         "nome_quem_enviou": data.get("pushName", ""),
-        "mensagem": data.get("message", {}).get("conversation", ""),
+        "mensagem": (
+            data.get("message", {}).get("conversation", "")
+            or data.get("message", {}).get("extendedTextMessage", {}).get("text", "")
+        ),
         "id_mensagem": key.get("id", ""),
         "stanza_id": data.get("contextInfo", {}).get("stanzaId", ""),
         "tipo_mensagem": data.get("messageType", ""),

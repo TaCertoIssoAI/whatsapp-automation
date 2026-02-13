@@ -140,7 +140,7 @@ Agora você precisa dizer à Evolution API para enviar webhooks para o seu servi
 1. Acesse o painel da Evolution API: `https://ta-certo-isso-ai-evolution-api.598vvv.easypanel.host`
 2. Vá nas configurações da instância do WhatsApp
 3. Em **Webhook**, configure:
-   - **URL**: `https://SEU-ID.ngrok-free.app/messages-upsert`
+   - **URL**: `https://SEU-ID.ngrok-free.app`
    - **Events**: marque `MESSAGES_UPSERT`
    - **Webhook by Events**: ativado
 
@@ -151,7 +151,7 @@ curl -X POST "https://ta-certo-isso-ai-evolution-api.598vvv.easypanel.host/webho
   -H "apiKey: SUA_EVOLUTION_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://SEU-ID.ngrok-free.app/messages-upsert",
+    "url": "https://SEU-ID.ngrok-free.app",
     "webhook_by_events": true,
     "webhook_base64": true,
     "events": ["MESSAGES_UPSERT"]

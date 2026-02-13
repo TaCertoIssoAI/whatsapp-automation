@@ -20,6 +20,7 @@ def route_direct_message(state: WorkflowState) -> str:
     mapping = {
         "audioMessage": "process_audio",
         "conversation": "process_text",
+        "extendedTextMessage": "process_text",
         "imageMessage": "process_image",
         "stickerMessage": "process_image",
         "videoMessage": "process_video",

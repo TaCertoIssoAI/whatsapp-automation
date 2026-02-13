@@ -65,6 +65,7 @@ async def process_message(body: dict) -> None:
 
 
 @app.post("/messages-upsert")
+@app.post("/messages-upsert/messages-upsert")
 async def webhook_messages_upsert(
     request: Request, background_tasks: BackgroundTasks
 ) -> JSONResponse:
