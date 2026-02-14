@@ -1,17 +1,17 @@
-"""Serviços de inteligência artificial.
+"""Serviços de inteligência artificial — 100% Google Gemini.
 
-- OpenAI Whisper (transcrição de áudio)
-- OpenAI TTS (text-to-speech, voz onyx)
-- OpenAI GPT-4o-mini (análise de imagem — sub-workflow analyze-image)
-- Google Gemini (análise de vídeo)
+- Gemini (transcrição de áudio)
+- Gemini TTS (text-to-speech)
+- Gemini (análise de imagem — sub-workflow analyze-image)
+- Gemini (análise de vídeo)
 - Google Cloud Vision API (reverse image search — sub-workflow reverse-search)
 """
 
 import asyncio
 import base64
+import io
 import logging
 import tempfile
-import time
 from pathlib import Path
 
 import httpx
@@ -21,59 +21,101 @@ import config
 logger = logging.getLogger(__name__)
 
 
-# ──────────────────────── OpenAI — Transcrição ────────────────────────
+# ──────────────────────── Gemini Client (lazy) ────────────────────────
+
+
+def _get_gemini_client():
+    """Retorna um cliente Gemini (criado sob demanda)."""
+    from google import genai
+
+    return genai.Client(api_key=config.GOOGLE_GEMINI_API_KEY)
+
+
+# ──────────────────────── Gemini — Transcrição de Áudio ────────────────────────
+
+TRANSCRIPTION_PROMPT = (
+    "Transcreva o áudio a seguir com precisão. "
+    "Retorne APENAS a transcrição do que foi dito, sem comentários, "
+    "sem timestamps, sem identificação de falantes, sem formatação extra. "
+    "Se o áudio estiver em português, retorne em português."
+)
 
 
 async def transcribe_audio(audio_base64: str) -> str:
-    """Transcreve áudio usando OpenAI Whisper.
+    """Transcreve áudio usando Google Gemini.
 
-    Recebe o áudio em base64, salva em arquivo temporário e envia para a API.
+    Recebe o áudio em base64, envia inline para o Gemini e retorna a transcrição.
     Equivalente ao nó 'Transcribe a recording2' do n8n.
     """
-    from openai import AsyncOpenAI
+    from google.genai import types
 
-    client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
-
+    client = _get_gemini_client()
     audio_bytes = base64.b64decode(audio_base64)
 
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = Path(tmp.name)
+    response = client.models.generate_content(
+        model=config.GEMINI_TRANSCRIPTION_MODEL,
+        contents=[
+            types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp3"),
+            TRANSCRIPTION_PROMPT,
+        ],
+    )
 
-    try:
-        with open(tmp_path, "rb") as audio_file:
-            transcript = await client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-            )
-        logger.info("Áudio transcrito com sucesso (%d chars)", len(transcript.text))
-        return transcript.text
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    text = response.text or ""
+    logger.info("Áudio transcrito com sucesso via Gemini (%d chars)", len(text))
+    return text
 
 
-# ──────────────────────── OpenAI — TTS ────────────────────────
+# ──────────────────────── Gemini — TTS ────────────────────────
+
+
+def _pcm_to_mp3(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
+    """Converte PCM bruto (16-bit mono) para MP3 via pydub."""
+    from pydub import AudioSegment
+
+    audio = AudioSegment(
+        data=pcm_data,
+        sample_width=2,  # 16-bit
+        frame_rate=sample_rate,
+        channels=1,
+    )
+
+    mp3_buffer = io.BytesIO()
+    audio.export(mp3_buffer, format="mp3", bitrate="64k")
+    return mp3_buffer.getvalue()
 
 
 async def generate_tts(text: str) -> str:
-    """Gera áudio via OpenAI TTS (voz onyx).
+    """Gera áudio via Gemini TTS.
 
-    Retorna o áudio em base64.
+    Retorna o áudio em base64 (MP3).
     Equivalente ao nó 'Generate audio2' do n8n.
     """
-    from openai import AsyncOpenAI
+    from google.genai import types
 
-    client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+    client = _get_gemini_client()
 
-    response = await client.audio.speech.create(
-        model="tts-1",
-        voice="onyx",
-        input=text,
+    response = client.models.generate_content(
+        model=config.GEMINI_TTS_MODEL,
+        contents=text,
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=config.GEMINI_TTS_VOICE,
+                    )
+                )
+            ),
+        ),
     )
 
-    audio_bytes = response.content
-    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-    logger.info("TTS gerado com sucesso (%d bytes)", len(audio_bytes))
+    audio_data = response.candidates[0].content.parts[0].inline_data.data
+
+    # Converter PCM bruto → MP3 para compatibilidade com WhatsApp
+    mp3_bytes = await asyncio.to_thread(_pcm_to_mp3, audio_data)
+    audio_b64 = base64.b64encode(mp3_bytes).decode("utf-8")
+
+    logger.info("TTS gerado com sucesso via Gemini (%d bytes MP3)", len(mp3_bytes))
     return audio_b64
 
 
@@ -96,14 +138,12 @@ Descrição completa do vídeo:
 
 
 async def analyze_video(video_base64: str) -> str:
-    """Analisa vídeo usando Google Gemini 2.5 Flash.
+    """Analisa vídeo usando Google Gemini.
 
     Recebe o vídeo em base64, envia para o Gemini e retorna a descrição.
     Equivalente ao nó 'Analyze video2' do n8n.
     """
-    from google import genai
-
-    client = genai.Client(api_key=config.GOOGLE_GEMINI_API_KEY)
+    client = _get_gemini_client()
 
     video_bytes = base64.b64decode(video_base64)
 
@@ -140,7 +180,7 @@ async def analyze_video(video_base64: str) -> str:
         logger.info("Arquivo de vídeo pronto (estado: ACTIVE)")
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=config.GEMINI_VIDEO_MODEL,
             contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
         )
         description = response.text or ""
@@ -150,7 +190,7 @@ async def analyze_video(video_base64: str) -> str:
         tmp_path.unlink(missing_ok=True)
 
 
-# ──────────────────────── OpenAI GPT-4o-mini — Análise de Imagem ──────
+# ──────────────────────── Gemini — Análise de Imagem ──────
 # Equivalente ao sub-workflow 'analyze-image' do n8n
 
 
@@ -183,38 +223,27 @@ IMAGE_ANALYSIS_PROMPT = (
 
 
 async def analyze_image_content(image_base64: str) -> str:
-    """Analisa imagem usando OpenAI GPT-4o-mini.
+    """Analisa imagem usando Google Gemini.
 
     Equivalente ao sub-workflow 'analyze-image' do n8n.
-    Usa o mesmo modelo (gpt-4o-mini) e prompt exato do n8n.
+    Usa o mesmo prompt exato do n8n.
     """
-    from openai import AsyncOpenAI
+    from google.genai import types
 
-    client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+    client = _get_gemini_client()
 
-    response = await client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": IMAGE_ANALYSIS_PROMPT,
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64}",
-                        },
-                    },
-                ],
-            }
+    image_bytes = base64.b64decode(image_base64)
+
+    response = client.models.generate_content(
+        model=config.GEMINI_IMAGE_MODEL,
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+            IMAGE_ANALYSIS_PROMPT,
         ],
     )
 
-    analysis = response.choices[0].message.content or ""
-    logger.info("Imagem analisada com sucesso via GPT-4o-mini (%d chars)", len(analysis))
+    analysis = response.text or ""
+    logger.info("Imagem analisada com sucesso via Gemini (%d chars)", len(analysis))
     return analysis
 
 

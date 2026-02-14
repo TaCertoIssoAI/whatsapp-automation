@@ -11,7 +11,7 @@
 
 > **Implementação Python do bot de verificação de fake news para WhatsApp usando FastAPI e LangGraph**
 
-Este repositório contém a **implementação Python** do bot **Tá Certo Isso AI?**, replicando fielmente a lógica originalmente construída em [n8n](https://github.com/TaCertoIssoAI/n8n-workflows). Utilizamos **LangGraph** para orquestração de workflows, **FastAPI** para o webhook, e integrações com **OpenAI**, **Google Gemini** e **Evolution API**.
+Este repositório contém a **implementação Python** do bot **Tá Certo Isso AI?**, replicando fielmente a lógica originalmente construída em [n8n](https://github.com/TaCertoIssoAI/n8n-workflows). Utilizamos **LangGraph** para orquestração de workflows, **FastAPI** para o webhook, e integrações com **Google Gemini** e **Evolution API**.
 
 ---
 
@@ -55,11 +55,11 @@ Esta implementação Python oferece:
          │
          ▼
 ┌────────────────────────────────────┐
-│  AI Services & External APIs      │
-│  • OpenAI (Whisper, GPT-4o, TTS)  │
-│  • Google Gemini (Video Analysis) │
-│  • Google Vision (Reverse Search) │
-│  • Fact-check API (Custom)        │
+│  AI Services & External APIs       │
+│  • Google Gemini (Áudio, Imagem,   │
+│    Vídeo, TTS)                     │
+│  • Google Vision (Reverse Search)  │
+│  • Fact-check API (Custom)         │
 └────────────────────────────────────┘
 ```
 
@@ -69,9 +69,9 @@ Esta implementação Python oferece:
 
 ### Processamento Multimodal
 - **📝 Texto**: Análise direta via fact-checking API
-- **🎤 Áudio**: Transcrição com OpenAI Whisper → Fact-check → Resposta em áudio (TTS)
-- **🖼️ Imagem**: Análise com GPT-4o-mini + Busca reversa (Google Vision) → Fact-check
-- **🎥 Vídeo**: Análise com Gemini 2.5 Flash (até 2 minutos) → Fact-check
+- **🎤 Áudio**: Transcrição com Google Gemini → Fact-check → Resposta em áudio (Gemini TTS)
+- **🖼️ Imagem**: Análise com Google Gemini + Busca reversa (Google Vision) → Fact-check
+- **🎥 Vídeo**: Análise com Google Gemini (até 2 minutos) → Fact-check
 
 ### Comportamento Inteligente
 - ✅ Detecta mensagens diretas vs. menções em grupos
@@ -88,10 +88,10 @@ Esta implementação Python oferece:
 |-----------|-----------|-----|
 | **Backend** | [FastAPI](https://fastapi.tiangolo.com/) | Webhook HTTP para Evolution API |
 | **Orquestração** | [LangGraph](https://langchain-ai.github.io/langgraph/) | Gerenciamento de workflow e estado |
-| **IA - Transcrição** | [OpenAI Whisper](https://openai.com/research/whisper) | Conversão de áudio em texto |
-| **IA - Análise de Texto** | [OpenAI GPT-4o-mini](https://openai.com/gpt-4) | Análise de imagens e raciocínio |
-| **IA - Análise de Vídeo** | [Google Gemini 2.5 Flash](https://ai.google.dev/) | Processamento multimodal de vídeos |
-| **IA - TTS** | [OpenAI TTS](https://platform.openai.com/docs/guides/text-to-speech) | Geração de áudio (voz "onyx") |
+| **IA - Transcrição** | [Google Gemini](https://ai.google.dev/) | Conversão de áudio em texto |
+| **IA - Análise de Imagem** | [Google Gemini](https://ai.google.dev/) | Análise de imagens para fact-checking |
+| **IA - Análise de Vídeo** | [Google Gemini](https://ai.google.dev/) | Processamento multimodal de vídeos |
+| **IA - TTS** | [Google Gemini TTS](https://ai.google.dev/) | Geração de áudio (text-to-speech) |
 | **Visão Computacional** | [Google Cloud Vision API](https://cloud.google.com/vision) | Busca reversa de imagens |
 | **WhatsApp Gateway** | [Evolution API](https://evolution-api.com/) | Integração com WhatsApp |
 | **Fact-checking** | API Proprietária | Verificação de veracidade |
@@ -103,7 +103,7 @@ Esta implementação Python oferece:
 ### Pré-requisitos
 - Python 3.12+
 - Conta Evolution API configurada
-- API keys: OpenAI, Google Gemini, Google Cloud Vision
+- API keys: Google Gemini, Google Cloud Vision
 
 ### 1. Clonar o repositório
 ```bash
@@ -132,11 +132,10 @@ Crie um arquivo `.env` na raiz do projeto:
 EVOLUTION_API_URL=https://sua-evolution-api.com
 EVOLUTION_API_KEY=sua_api_key
 
-# OpenAI
-OPENAI_API_KEY=sk-...
-
-# Google APIs
+# Google Gemini (transcrição, imagem, vídeo, TTS)
 GOOGLE_GEMINI_API_KEY=...
+
+# Google Cloud Vision (reverse image search)
 GOOGLE_CLOUD_API_KEY=...
 
 # Fact-check API
@@ -195,7 +194,7 @@ whatsapp-integration/
 │   ├── filters.py          # Filters (group, mention, greeting)
 │   ├── router.py           # Switch6 & Switch9 routing
 │   ├── media_processor.py  # Audio/Image/Video/Text processing
-│   ├── ai_services.py      # OpenAI & Gemini integrations
+│   ├── ai_services.py      # Google Gemini AI integrations
 │   ├── fact_checker.py     # Fact-check API client
 │   ├── evolution_api.py    # Evolution API client
 │   └── response_sender.py  # Send text/audio responses

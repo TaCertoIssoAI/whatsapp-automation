@@ -10,7 +10,7 @@ Guia completo para colocar o bot de detecção de fake news funcionando.
 - **pip** (gerenciador de pacotes)
 - **ngrok** (para expor o servidor local — já instalado)
 - Conta na **Evolution API**
-- Chaves de API: **OpenAI**, **Google Gemini**, **Google Cloud Vision**
+- Chaves de API: **Google Gemini**, **Google Cloud Vision**
 
 ---
 
@@ -50,7 +50,6 @@ nano .env
 |----------|---------------|--------|
 | `EVOLUTION_API_URL` | Screenshot da Evolution API | ✅ Preenchido |
 | `EVOLUTION_API_KEY` | Painel da Evolution API → ApiKey | ⬜ Preencher |
-| `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com/api-keys) | ⬜ Preencher |
 | `GOOGLE_GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/apikey) | ⬜ Preencher |
 | `GOOGLE_CLOUD_API_KEY` | Google Cloud Console (ver seção abaixo) | ⬜ Preencher |
 | `FACT_CHECK_API_URL` | API do TaCertoIssoAI | ✅ Preenchido |
@@ -200,7 +199,7 @@ whatsapp-integration/
 │   ├── filters.py          ← Lógica de roteamento (grupo, menção, saudação)
 │   ├── router.py           ← Roteamento por tipo de mídia (Switch6/Switch9)
 │   ├── evolution_api.py    ← Cliente da Evolution API
-│   ├── ai_services.py      ← OpenAI + Gemini + Google Vision API
+│   ├── ai_services.py      ← Google Gemini + Google Vision API
 │   ├── media_processor.py  ← Processamento de áudio/imagem/vídeo
 │   ├── fact_checker.py     ← Cliente da API de fact-checking
 │   └── response_sender.py  ← Envio de respostas
@@ -247,8 +246,7 @@ graph TD
 | Credencial N8N | Variável .env | Uso |
 |----------------|--------------|-----|
 | `Evolution account` (ApiKey) | `EVOLUTION_API_KEY` | Enviar msgs, marcar como lida, presença |
-| `OpenAi account` (API Key) | `OPENAI_API_KEY` | Whisper (transcrição), TTS, GPT-4o-mini (imagem) |
-| `Google Gemini(PaLM) Api account` | `GOOGLE_GEMINI_API_KEY` | Gemini 2.5 Flash (análise de vídeo) |
+| `Google Gemini(PaLM) Api account` | `GOOGLE_GEMINI_API_KEY` | Gemini (transcrição, imagem, vídeo, TTS) |
 | `Google account` (OAuth2) | `GOOGLE_CLOUD_API_KEY` | Vision API WEB_DETECTION (reverse search) |
 
 > [!NOTE]
