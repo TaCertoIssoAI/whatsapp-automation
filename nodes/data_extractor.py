@@ -1,4 +1,8 @@
-"""Nó de extração de dados do webhook (equivalente ao nó 'Pegar dados' do n8n)."""
+"""Nó de extração de dados do webhook (equivalente ao nó 'Pegar dados' do n8n).
+
+Adaptado para o formato de webhook da WhatsApp Business Cloud API.
+Formato: body.entry[0].changes[0].value.messages[0]
+"""
 
 import logging
 from typing import Any
@@ -8,66 +12,134 @@ from state import WorkflowState
 logger = logging.getLogger(__name__)
 
 
-def get_context_info(data: dict[str, Any]) -> dict[str, Any]:
-    """Extrai contextInfo do payload, buscando em múltiplas localizações.
+def _get_message_data(body: dict[str, Any]) -> dict[str, Any]:
+    """Extrai o objeto de mensagem do payload da Cloud API.
 
-    A Evolution API pode colocar contextInfo em:
-    1. data.contextInfo (nível superior — campo de conveniência)
-    2. data.message.<tipoMensagem>.contextInfo (dentro do tipo de mensagem)
-
-    Retorna o primeiro contextInfo válido encontrado, ou {}.
+    Estrutura: body.entry[0].changes[0].value
     """
-    # 1. Nível superior (usado pelo n8n)
-    ctx = data.get("contextInfo")
-    if ctx and isinstance(ctx, dict):
-        return ctx
+    entries = body.get("entry", [])
+    if not entries:
+        return {}
+    changes = entries[0].get("changes", [])
+    if not changes:
+        return {}
+    return changes[0].get("value", {})
 
-    # 2. Dentro do tipo de mensagem
-    message = data.get("message") or {}
-    for msg_type_key in (
-        "extendedTextMessage",
-        "imageMessage",
-        "videoMessage",
-        "audioMessage",
-        "stickerMessage",
-        "documentMessage",
-    ):
-        msg_type_data = message.get(msg_type_key)
-        if isinstance(msg_type_data, dict):
-            ctx = msg_type_data.get("contextInfo")
-            if ctx and isinstance(ctx, dict):
-                return ctx
 
-    return {}
+def _get_message(value: dict[str, Any]) -> dict[str, Any]:
+    """Extrai o primeiro objeto de mensagem."""
+    messages = value.get("messages", [])
+    if not messages:
+        return {}
+    return messages[0]
+
+
+def _get_contact_name(value: dict[str, Any]) -> str:
+    """Extrai o nome do contato do payload."""
+    contacts = value.get("contacts", [])
+    if not contacts:
+        return ""
+    profile = contacts[0].get("profile", {})
+    return profile.get("name", "")
+
+
+def _extract_text(message: dict[str, Any]) -> str:
+    """Extrai o texto da mensagem, seja text, interactive ou button."""
+    msg_type = message.get("type", "")
+
+    if msg_type == "text":
+        return message.get("text", {}).get("body", "")
+    if msg_type == "interactive":
+        interactive = message.get("interactive", {})
+        # Button reply ou list reply
+        button = interactive.get("button_reply", {})
+        if button:
+            return button.get("title", "")
+        list_reply = interactive.get("list_reply", {})
+        if list_reply:
+            return list_reply.get("title", "")
+    if msg_type == "button":
+        return message.get("button", {}).get("text", "")
+
+    return ""
+
+
+def _extract_media_id(message: dict[str, Any]) -> str:
+    """Extrai o media_id da mensagem de mídia (audio, image, video, sticker, document)."""
+    msg_type = message.get("type", "")
+    media_obj = message.get(msg_type, {})
+    return media_obj.get("id", "")
+
+
+def _extract_caption(message: dict[str, Any]) -> str:
+    """Extrai a legenda de mensagens de imagem/vídeo."""
+    msg_type = message.get("type", "")
+    media_obj = message.get(msg_type, {})
+    return media_obj.get("caption", "")
 
 
 def extract_data(state: WorkflowState) -> WorkflowState:
-    """Extrai os dados relevantes do payload do webhook da Evolution API."""
+    """Extrai os dados relevantes do payload do webhook da WhatsApp Cloud API.
+
+    Formato da Cloud API:
+    {
+      "entry": [{
+        "changes": [{
+          "value": {
+            "messages": [{
+              "from": "5511999999999",
+              "id": "wamid.xxx",
+              "type": "text|audio|image|video|sticker|document",
+              "text": {"body": "..."},
+              ...
+            }],
+            "contacts": [{"profile": {"name": "..."}}]
+          }
+        }]
+      }]
+    }
+    """
     body = state["raw_body"]
-    data = body.get("data", {})
-    key = data.get("key", {})
-    context_info = get_context_info(data)
+    value = _get_message_data(body)
+    message = _get_message(value)
+
+    if not message:
+        logger.warning("Nenhuma mensagem encontrada no payload")
+        return {}  # type: ignore[return-value]
+
+    # Contexto de citação (reply)
+    context = message.get("context", {})
+    stanza_id = context.get("id", "")
+
+    # Tipo de mensagem da Cloud API (text, audio, image, video, sticker, document)
+    tipo_mensagem = message.get("type", "")
+
+    # Extrair texto (para text, interactive, button)
+    mensagem = _extract_text(message)
+
+    # Extrair media_id (para audio, image, video, sticker, document)
+    media_id = _extract_media_id(message)
+
+    # Extrair caption (para image, video)
+    caption = _extract_caption(message)
 
     extracted = {
         "endpoint_api": state.get("endpoint_api", ""),
-        "instancia": body.get("instance", ""),
-        "numero_quem_enviou": key.get("remoteJid", ""),
-        "nome_quem_enviou": data.get("pushName", ""),
-        "mensagem": (
-            data.get("message", {}).get("conversation", "")
-            or data.get("message", {}).get("extendedTextMessage", {}).get("text", "")
-        ),
-        "id_mensagem": key.get("id", ""),
-        "stanza_id": context_info.get("stanzaId", ""),
-        "tipo_mensagem": data.get("messageType", ""),
-        "chave_api": body.get("apikey", ""),
+        "numero_quem_enviou": message.get("from", ""),
+        "nome_quem_enviou": _get_contact_name(value),
+        "mensagem": mensagem,
+        "id_mensagem": message.get("id", ""),
+        "stanza_id": stanza_id,
+        "tipo_mensagem": tipo_mensagem,
+        "media_id": media_id,
+        "caption": caption,
     }
 
     logger.info(
-        "Dados extraídos — instância=%s, de=%s, tipo=%s",
-        extracted["instancia"],
+        "Dados extraídos — de=%s, tipo=%s, media_id=%s",
         extracted["numero_quem_enviou"],
         extracted["tipo_mensagem"],
+        extracted["media_id"] or "(nenhum)",
     )
 
     return extracted  # type: ignore[return-value]

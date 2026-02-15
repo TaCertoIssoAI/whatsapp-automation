@@ -68,8 +68,11 @@ async def transcribe_audio(audio_base64: str) -> str:
 # ──────────────────────── Gemini — TTS ────────────────────────
 
 
-def _pcm_to_mp3(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
-    """Converte PCM bruto (16-bit mono) para MP3 via pydub."""
+def _pcm_to_ogg_opus(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
+    """Converte PCM bruto (16-bit mono) para OGG/Opus via pydub.
+
+    A WhatsApp Cloud API exige áudio em OGG/Opus para mensagens de voz.
+    """
     from pydub import AudioSegment
 
     audio = AudioSegment(
@@ -79,16 +82,15 @@ def _pcm_to_mp3(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
         channels=1,
     )
 
-    mp3_buffer = io.BytesIO()
-    audio.export(mp3_buffer, format="mp3", bitrate="64k")
-    return mp3_buffer.getvalue()
+    ogg_buffer = io.BytesIO()
+    audio.export(ogg_buffer, format="ogg", codec="libopus", bitrate="64k")
+    return ogg_buffer.getvalue()
 
 
-async def generate_tts(text: str) -> str:
+async def generate_tts(text: str) -> bytes:
     """Gera áudio via Gemini TTS.
 
-    Retorna o áudio em base64 (MP3).
-    Equivalente ao nó 'Generate audio2' do n8n.
+    Retorna os bytes do áudio em OGG/Opus (compatível com WhatsApp Cloud API).
     """
     from google.genai import types
 
@@ -111,12 +113,11 @@ async def generate_tts(text: str) -> str:
 
     audio_data = response.candidates[0].content.parts[0].inline_data.data
 
-    # Converter PCM bruto → MP3 para compatibilidade com WhatsApp
-    mp3_bytes = await asyncio.to_thread(_pcm_to_mp3, audio_data)
-    audio_b64 = base64.b64encode(mp3_bytes).decode("utf-8")
+    # Converter PCM bruto → OGG/Opus para compatibilidade com WhatsApp Cloud API
+    ogg_bytes = await asyncio.to_thread(_pcm_to_ogg_opus, audio_data)
 
-    logger.info("TTS gerado com sucesso via Gemini (%d bytes MP3)", len(mp3_bytes))
-    return audio_b64
+    logger.info("TTS gerado com sucesso via Gemini (%d bytes OGG/Opus)", len(ogg_bytes))
+    return ogg_bytes
 
 
 # ──────────────────────── Google Gemini — Análise de Vídeo ────────────────────────

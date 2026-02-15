@@ -1,14 +1,18 @@
-"""Servidor FastAPI com endpoint webhook para receber mensagens do WhatsApp.
+"""Servidor FastAPI com webhook para a WhatsApp Business Cloud API.
 
-Equivalente ao nó 'Mensagem recebida' (webhook POST /messages-upsert) do n8n.
+Endpoints:
+- GET  /webhook  → Verificação do webhook (hub.verify_token)
+- POST /webhook  → Receber mensagens e eventos
+- GET  /health   → Health check
 """
 
-import asyncio
+import hashlib
+import hmac
 import logging
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 import config
 from graph import compile_graph
@@ -27,11 +31,39 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="TaCertoIssoAI - Fake News Detector",
     description="Bot de detecção de fake news para WhatsApp via LangGraph",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 # Compila o grafo uma vez na inicialização
 workflow = compile_graph()
+
+
+# ──────────────────────── Validação de assinatura ────────────────────────
+
+
+def _verify_signature(payload: bytes, signature_header: str) -> bool:
+    """Valida a assinatura X-Hub-Signature-256 do webhook.
+
+    A Meta assina cada requisição com HMAC-SHA256 usando o App Secret.
+    Se WHATSAPP_APP_SECRET não estiver configurado, pula a validação.
+    """
+    app_secret = config.WHATSAPP_APP_SECRET
+    if not app_secret:
+        logger.warning("WHATSAPP_APP_SECRET não configurado — assinatura não validada")
+        return True
+
+    if not signature_header:
+        return False
+
+    # Formato: "sha256=<hex_digest>"
+    expected_signature = hmac.HMAC(
+        app_secret.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+    received = signature_header.removeprefix("sha256=")
+    return hmac.compare_digest(expected_signature, received)
 
 
 # ──────────────────────── Processamento assíncrono ────────────────────────
@@ -45,26 +77,16 @@ async def process_message(body: dict) -> None:
             "endpoint_api": config.FACT_CHECK_API_URL,
         }
 
-        data = body.get("data", {})
-        key = data.get("key", {})
-        remote_jid = key.get("remoteJid", "unknown")
+        # Extrair informações básicas para log
+        value = (
+            body.get("entry", [{}])[0]
+            .get("changes", [{}])[0]
+            .get("value", {})
+        )
+        messages = value.get("messages", [])
+        sender = messages[0].get("from", "unknown") if messages else "unknown"
 
-        logger.info("Processando mensagem de %s", remote_jid)
-
-        # Log detalhado para mensagens de grupo (ajuda a descobrir BOT_MENTION_JID)
-        if remote_jid.endswith("@g.us"):
-            from nodes.data_extractor import get_context_info
-            context_info = get_context_info(data)
-            mentioned = context_info.get("mentionedJid", [])
-            participant = key.get("participant", "")
-            logger.info(
-                "=== GRUPO === participant=%s, mentionedJid=%s, "
-                "messageType=%s, fromMe=%s",
-                participant,
-                mentioned,
-                data.get("messageType", ""),
-                key.get("fromMe", False),
-            )
+        logger.info("Processando mensagem de %s", sender)
 
         result = await workflow.ainvoke(initial_state)
 
@@ -80,43 +102,80 @@ async def process_message(body: dict) -> None:
 # ──────────────────────── Endpoints ────────────────────────
 
 
-@app.post("/messages-upsert")
-@app.post("/messages-upsert/messages-upsert")
-async def webhook_messages_upsert(
+@app.get("/webhook", response_model=None)
+async def webhook_verify(
+    request: Request,
+):
+    """Verificação do webhook pela Meta (GET).
+
+    A Meta envia um GET com:
+    - hub.mode = "subscribe"
+    - hub.verify_token = o token que você definiu
+    - hub.challenge = string de desafio para retornar
+
+    Deve retornar o hub.challenge se o token for válido.
+    """
+    mode = request.query_params.get("hub.mode", "")
+    token = request.query_params.get("hub.verify_token", "")
+    challenge = request.query_params.get("hub.challenge", "")
+
+    if mode == "subscribe" and token == config.WHATSAPP_VERIFY_TOKEN:
+        logger.info("Webhook verificado com sucesso")
+        return PlainTextResponse(content=challenge, status_code=200)
+
+    logger.warning("Falha na verificação do webhook (token inválido)")
+    return JSONResponse(content={"error": "Forbidden"}, status_code=403)
+
+
+@app.post("/webhook")
+async def webhook_receive(
     request: Request, background_tasks: BackgroundTasks
 ) -> JSONResponse:
-    """Endpoint webhook que recebe mensagens do Evolution API.
+    """Endpoint webhook que recebe mensagens da WhatsApp Cloud API.
 
-    Equivalente ao nó 'Mensagem recebida' do n8n (POST /messages-upsert).
-    Processa a mensagem em background para não bloquear a resposta ao webhook.
+    Valida a assinatura X-Hub-Signature-256 e processa a mensagem em background.
     """
+    payload = await request.body()
+
+    # Validar assinatura
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if not _verify_signature(payload, signature):
+        logger.warning("Assinatura inválida no webhook")
+        return JSONResponse(content={"error": "Invalid signature"}, status_code=403)
+
     body = await request.json()
 
-    logger.info(
-        "Webhook recebido — instância=%s, evento=%s",
-        body.get("instance", "unknown"),
-        body.get("event", "unknown"),
-    )
+    # A Cloud API envia vários tipos de evento; só processamos mensagens
+    entries = body.get("entry", [])
+    if not entries:
+        return JSONResponse(content={"status": "ok"}, status_code=200)
 
-    # Ignorar mensagens enviadas pelo próprio bot (fromMe) e status broadcast
-    data = body.get("data", {})
-    key = data.get("key", {})
-    if key.get("fromMe", False):
-        logger.info("Ignorando mensagem própria (fromMe=true)")
-        return JSONResponse(content={"status": "ignored"}, status_code=200)
+    for entry in entries:
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            messages = value.get("messages", [])
 
-    remote_jid = key.get("remoteJid", "")
-    if remote_jid == "status@broadcast":
-        logger.info("Ignorando status broadcast")
-        return JSONResponse(content={"status": "ignored"}, status_code=200)
+            if not messages:
+                # Pode ser evento de status (delivered, read), ignorar
+                statuses = value.get("statuses", [])
+                if statuses:
+                    logger.debug("Evento de status recebido, ignorando")
+                continue
 
-    # Processa em background para responder rapidamente ao webhook
-    background_tasks.add_task(process_message, body)
+            message = messages[0]
+            sender = message.get("from", "unknown")
+            msg_type = message.get("type", "unknown")
 
-    return JSONResponse(
-        content={"status": "received"},
-        status_code=200,
-    )
+            logger.info(
+                "Webhook recebido — de=%s, tipo=%s",
+                sender,
+                msg_type,
+            )
+
+            # Processa em background para responder rapidamente ao webhook
+            background_tasks.add_task(process_message, body)
+
+    return JSONResponse(content={"status": "received"}, status_code=200)
 
 
 @app.get("/health")
