@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  whatsapp-bot:
+    build: .
+    container_name: whatsapp-integration
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      # WhatsApp Business Cloud API
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      - WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET}
+      
+      # Google Gemini
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY}
+      - GEMINI_TRANSCRIPTION_MODEL=${GEMINI_TRANSCRIPTION_MODEL:-gemini-3-flash-preview}
+      - GEMINI_IMAGE_MODEL=${GEMINI_IMAGE_MODEL:-gemini-3-flash-preview}
+      - GEMINI_VIDEO_MODEL=${GEMINI_VIDEO_MODEL:-gemini-3-flash-preview}
+      - GEMINI_TTS_MODEL=${GEMINI_TTS_MODEL:-gemini-2.5-flash-preview-tts}
+      - GEMINI_TTS_VOICE=${GEMINI_TTS_VOICE:-Kore}
+      
+      # Google Cloud Vision API
+      - GOOGLE_CLOUD_API_KEY=${GOOGLE_CLOUD_API_KEY}
+      
+      # Fact-checking API
+      - FACT_CHECK_API_URL=${FACT_CHECK_API_URL:-https://ta-certo-isso-ai-767652480333.southamerica-east1.run.app}
+      
+      # Servidor
+      - WEBHOOK_PORT=${WEBHOOK_PORT:-5000}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

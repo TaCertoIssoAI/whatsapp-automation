@@ -5,11 +5,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Evolution API
-EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "")
-EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
+# ──────────────────────── WhatsApp Business Cloud API ────────────────────────
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
+WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")
 
-# Google Gemini
+WHATSAPP_API_BASE_URL = (
+    f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_NUMBER_ID}"
+)
+
+# ──────────────────────── Google Gemini ────────────────────────
 GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")
 
 # Modelos Gemini (editáveis via .env)
@@ -19,17 +25,17 @@ GEMINI_VIDEO_MODEL = os.getenv("GEMINI_VIDEO_MODEL", "gemini-3-flash-preview")
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
 
-# Google Cloud (Vision API para reverse image search)
+# ──────────────────────── Google Cloud Vision API ────────────────────────
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")
 
-# Fact-checking API
+# ──────────────────────── Fact-checking API ────────────────────────
 FACT_CHECK_API_URL = os.getenv(
     "FACT_CHECK_API_URL",
     "https://ta-certo-isso-ai-767652480333.southamerica-east1.run.app",
 )
 
-# Bot
-BOT_MENTION_JID = os.getenv("BOT_MENTION_JID", "117558187450509@lid")
+# ──────────────────────── Bot (grupo — desativado por enquanto) ────────────────────────
+# BOT_MENTION_JID = os.getenv("BOT_MENTION_JID", "117558187450509@lid")
 
-# Server
+# ──────────────────────── Servidor ────────────────────────
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))

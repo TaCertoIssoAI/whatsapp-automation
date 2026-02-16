@@ -10,25 +10,26 @@ class WorkflowState(TypedDict, total=False):
     raw_body: dict[str, Any]
 
     # Dados extraídos (nó "Pegar dados")
-    instancia: str
     numero_quem_enviou: str
     nome_quem_enviou: str
     mensagem: str
     id_mensagem: str
     stanza_id: str
     tipo_mensagem: str
-    chave_api: str
     endpoint_api: str
+
+    # Mídia (Cloud API usa media_id para download)
+    media_id: str
 
     # Flags de roteamento
     is_group: bool
-    is_mention_of_bot: bool
-    is_response_to_message: bool
     is_greeting: bool
     is_initial_message: bool
 
-    # Tipo da mensagem citada (para grupo com menção)
-    quoted_message_type: str
+    # ── Flags de grupo (comentados — funcionalidade de grupo desativada) ──
+    # is_mention_of_bot: bool
+    # is_response_to_message: bool
+    # quoted_message_type: str
 
     # Dados processados
     transcription: str
