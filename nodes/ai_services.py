@@ -346,3 +346,125 @@ async def reverse_image_search(image_base64: str) -> str:
     except Exception as e:
         logger.warning("Reverse image search falhou: %s", e)
         return "Não foi possível realizar a pesquisa reversa da imagem."
+
+
+# ──────────────────────── Gemini — Classificação de Mensagem ────────────────────────
+
+CLASSIFIER_PROMPT = """Você é um classificador de mensagens para um bot de verificação de fake news.
+
+Analise a(s) mensagem(ns) do usuário abaixo e decida se o usuário quer VERIFICAR alguma informação/notícia ou se está apenas CONVERSANDO.
+
+Mensagens que devem ser classificadas como VERIFICAR:
+- Notícias, afirmações, claims, rumores que o usuário quer saber se são verdadeiros
+- Links para artigos/notícias
+- Textos encaminhados com informações duvidosas
+- Perguntas como "isso é verdade?", "é fake?", "pode verificar isso?"
+- Qualquer conteúdo que pareça uma notícia ou informação que pode ser verificada
+
+Mensagens que devem ser classificadas como CONVERSAR:
+- Saudações (oi, olá, bom dia, etc.)
+- Perguntas sobre o bot (como funciona, o que você faz, etc.)
+- Agradecimentos, elogios, reclamações sobre o bot
+- Conversas gerais que não contêm informações para verificar
+- Perguntas genéricas que não são sobre verificar uma notícia específica
+
+Responda APENAS com uma das duas palavras: VERIFICAR ou CONVERSAR
+
+Mensagem(ns) do usuário:
+{messages}"""
+
+
+async def classify_message(messages: list[str]) -> str:
+    """Classifica se as mensagens do usuário são para verificar ou conversar.
+
+    Args:
+        messages: Lista de textos das mensagens do usuário.
+
+    Returns:
+        'VERIFICAR' ou 'CONVERSAR'
+    """
+    client = _get_gemini_client()
+    messages_text = "\n".join(f"- {msg}" for msg in messages)
+    prompt = CLASSIFIER_PROMPT.format(messages=messages_text)
+
+    try:
+        response = client.models.generate_content(
+            model=config.GEMINI_CLASSIFIER_MODEL,
+            contents=prompt,
+        )
+        result = (response.text or "").strip().upper()
+        logger.info("Classificação Gemini: %s", result)
+
+        if "VERIFICAR" in result:
+            return "VERIFICAR"
+        return "CONVERSAR"
+    except Exception as e:
+        logger.error("Erro na classificação Gemini: %s", e)
+        # Em caso de erro, assume que é para verificar (comportamento seguro)
+        return "VERIFICAR"
+
+
+# ──────────────────────── Gemini — Resposta Conversacional ────────────────────────
+
+CHAT_SYSTEM_PROMPT = """Você é o assistente do TaCertoIssoAI, uma ferramenta de verificação de fake news pelo WhatsApp.
+
+Sobre o TaCertoIssoAI:
+Tá Certo Isso AI é uma ferramenta criada por estudantes de Ciência da Computação da Universidade Federal de Goiás (UFG) para combater a desinformação. Ela utiliza inteligência artificial para verificar se notícias, imagens, vídeos e áudios compartilhados no WhatsApp são verdadeiros ou falsos. O objetivo é oferecer uma forma simples e acessível de checar informações, ajudando as pessoas a identificar fake news antes de compartilhá-las. O projeto é sem fins lucrativos e voltado ao interesse público.
+
+Seu objetivo principal é ajudar os usuários a verificarem informações, notícias e conteúdos que possam ser fake news.
+
+Regras:
+1. Seja simpático, educado e conciso nas respostas.
+2. Se o usuário pedir para você verificar alguma informação que ele mencionou anteriormente na conversa, peça para ele enviar novamente a informação (texto, imagem, vídeo, áudio ou link) em uma nova mensagem separada, pois você só consegue verificar informações enviadas diretamente para análise.
+3. Explique que para verificar algo, o usuário deve enviar o conteúdo diretamente (texto, imagem, vídeo, link ou áudio).
+4. Não invente informações sobre notícias ou fatos. Você não é um verificador de fatos — apenas direcione o usuário a enviar o conteúdo para verificação.
+5. Responda em português brasileiro.
+6. Não use formatação markdown (como **, ##, etc.) pois a mensagem será enviada via WhatsApp."""
+
+
+async def generate_chat_response(
+    user_messages: list[str],
+    chat_history: list[dict],
+) -> str:
+    """Gera uma resposta conversacional usando o Gemini.
+
+    Args:
+        user_messages: Mensagens atuais do usuário a responder.
+        chat_history: Histórico de chat dos últimos 5 minutos (lista de dicts com 'role' e 'content').
+
+    Returns:
+        Texto da resposta do bot.
+    """
+    client = _get_gemini_client()
+
+    # Montar o contexto com histórico
+    context_parts = [CHAT_SYSTEM_PROMPT + "\n\n"]
+
+    if chat_history:
+        context_parts.append("Histórico recente da conversa:\n")
+        for entry in chat_history:
+            role = "Usuário" if entry["role"] == "user" else "Bot"
+            context_parts.append(f"{role}: {entry['content']}\n")
+        context_parts.append("\n")
+
+    context_parts.append("Mensagem(ns) atual(is) do usuário:\n")
+    for msg in user_messages:
+        context_parts.append(f"- {msg}\n")
+    context_parts.append("\nSua resposta:")
+
+    prompt = "".join(context_parts)
+
+    try:
+        response = client.models.generate_content(
+            model=config.GEMINI_CHAT_MODEL,
+            contents=prompt,
+        )
+        text = (response.text or "").strip()
+        logger.info("Resposta conversacional gerada (%d chars)", len(text))
+        return text
+    except Exception as e:
+        logger.error("Erro ao gerar resposta conversacional: %s", e)
+        return (
+            "Desculpe, tive um problema ao processar sua mensagem. "
+            "Você pode enviar o conteúdo que deseja verificar (texto, imagem, vídeo, link ou áudio)."
+        )

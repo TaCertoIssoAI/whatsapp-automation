@@ -73,6 +73,62 @@ async def send_text(
         return resp.json()
 
 
+# ──────────────────────── Enviar Mensagem Interativa com Botões ────────────────────────
+
+
+async def send_interactive_buttons(
+    remote_jid: str,
+    body_text: str,
+    buttons: list[dict[str, str]],
+    header_text: str | None = None,
+    footer_text: str | None = None,
+) -> dict:
+    """Envia mensagem interativa com botões de resposta via WhatsApp Cloud API.
+
+    Args:
+        remote_jid: Número do destinatário.
+        body_text: Texto principal da mensagem.
+        buttons: Lista de dicts com 'id' e 'title' para cada botão.
+        header_text: Texto do cabeçalho (opcional).
+        footer_text: Texto do rodapé (opcional).
+    """
+    action_buttons = [
+        {
+            "type": "reply",
+            "reply": {
+                "id": btn["id"],
+                "title": btn["title"],
+            },
+        }
+        for btn in buttons
+    ]
+
+    interactive: dict = {
+        "type": "button",
+        "body": {"text": body_text},
+        "action": {"buttons": action_buttons},
+    }
+
+    if header_text:
+        interactive["header"] = {"type": "text", "text": header_text}
+    if footer_text:
+        interactive["footer"] = {"text": footer_text}
+
+    body: dict = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": remote_jid,
+        "type": "interactive",
+        "interactive": interactive,
+    }
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.post(_messages_url(), json=body, headers=_headers())
+        resp.raise_for_status()
+        logger.info("Mensagem interativa com botões enviada para %s", remote_jid)
+        return resp.json()
+
+
 # ──────────────────────── Upload de Mídia ────────────────────────
 
 
@@ -254,10 +310,34 @@ async def send_typing_indicator(message_id: str) -> None:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(_messages_url(), json=body, headers=_headers())
             resp.raise_for_status()
-            logger.info("Indicador de digitação enviado para msg %s", message_id)
+            logger.debug("Indicador de digitação enviado para msg %s", message_id)
     except Exception as e:
         # Presença não é crítica, apenas log
         logger.warning("Falha ao enviar indicador de digitação: %s", e)
+
+
+async def start_typing_loop(message_id: str) -> asyncio.Task:
+    """Inicia um loop de indicador de digitação que roda em background.
+
+    O indicador é reenviado a cada 20 segundos (expira em ~25s na API).
+    Retorna a Task para que possa ser cancelada quando a resposta for enviada.
+
+    Usage:
+        typing_task = await start_typing_loop(msg_id)
+        # ... processar ...
+        typing_task.cancel()
+    """
+
+    async def _loop():
+        try:
+            while True:
+                await send_typing_indicator(message_id)
+                await asyncio.sleep(20)
+        except asyncio.CancelledError:
+            logger.debug("Loop de digitação cancelado para msg %s", message_id)
+
+    task = asyncio.create_task(_loop())
+    return task
 
 
 def send_typing_fire_and_forget(message_id: str) -> None:

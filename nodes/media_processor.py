@@ -2,15 +2,18 @@
 
 Cada função de processamento é um nó do LangGraph que:
 1. Envia mensagem de status ("Estou analisando...")
-2. Obtém a mídia (download via Cloud API)
-3. Processa a mídia (transcrição/análise)
-4. Chama a API de fact-checking
-5. Retorna o rationale
+2. Inicia indicador de digitação contínuo
+3. Obtém a mídia (download via Cloud API)
+4. Processa a mídia (transcrição/análise) — paralelizado quando possível
+5. Chama a API de fact-checking
+6. Cancela o indicador de digitação
+7. Retorna o rationale
 
 Adaptado para a WhatsApp Business Cloud API.
 Funções de mensagens citadas em grupo (Switch9) comentadas.
 """
 
+import asyncio
 import base64
 import logging
 import struct
@@ -86,7 +89,7 @@ def get_video_duration_from_base64(video_base64: str) -> float:
 async def process_audio(state: WorkflowState) -> WorkflowState:
     """Processa mensagem de áudio direta.
 
-    Flow: Enviar status → Download mídia → Transcrever → Fact-check.
+    Flow: Enviar status → Typing loop → Download mídia → Transcrever → Fact-check → Cancelar typing.
     """
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
@@ -100,28 +103,31 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         quoted_message_id=msg_id,
     )
 
-    # 1b. Enviar indicador de digitação (fire-and-forget)
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
+    # 1b. Iniciar indicador de digitação contínuo
+    typing_task = await whatsapp_api.start_typing_loop(msg_id)
 
-    # 2. Download da mídia e converter para base64
-    audio_b64 = await whatsapp_api.download_media_as_base64(media_id)
+    try:
+        # 2. Download da mídia e converter para base64
+        audio_b64 = await whatsapp_api.download_media_as_base64(media_id)
 
-    # 3. Transcrever áudio
-    transcription = await ai_services.transcribe_audio(audio_b64)
+        # 3. Transcrever áudio
+        transcription = await ai_services.transcribe_audio(audio_b64)
 
-    # 4. Fact-check
-    result = await fact_checker.check_text(
-        state["endpoint_api"],
-        transcription.replace("\n", " "),
-        content_type="audio",
-    )
+        # 4. Fact-check
+        result = await fact_checker.check_text(
+            state["endpoint_api"],
+            transcription.replace("\n", " "),
+            content_type="audio",
+        )
 
-    return {
-        "transcription": transcription,
-        "media_base64": audio_b64,
-        "rationale": result.get("rationale", ""),
-        "response_without_links": result.get("responseWithoutLinks", ""),
-    }  # type: ignore[return-value]
+        return {
+            "transcription": transcription,
+            "media_base64": audio_b64,
+            "rationale": result.get("rationale", ""),
+            "response_without_links": result.get("responseWithoutLinks", ""),
+        }  # type: ignore[return-value]
+    finally:
+        typing_task.cancel()
 
 
 # ──────────────────────── Texto (direto) ────────────────────────
@@ -130,7 +136,7 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
 async def process_text(state: WorkflowState) -> WorkflowState:
     """Processa mensagem de texto direta.
 
-    Flow: Enviar status → Fact-check direto.
+    Flow: Enviar status → Typing loop → Fact-check → Cancelar typing.
     """
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
@@ -144,19 +150,22 @@ async def process_text(state: WorkflowState) -> WorkflowState:
         quoted_message_id=msg_id,
     )
 
-    # 1b. Enviar indicador de digitação (fire-and-forget)
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
+    # 1b. Iniciar indicador de digitação contínuo
+    typing_task = await whatsapp_api.start_typing_loop(msg_id)
 
-    # 2. Fact-check
-    result = await fact_checker.check_text(
-        state["endpoint_api"],
-        mensagem.replace("\n", " "),
-        content_type="text",
-    )
+    try:
+        # 2. Fact-check
+        result = await fact_checker.check_text(
+            state["endpoint_api"],
+            mensagem.replace("\n", " "),
+            content_type="text",
+        )
 
-    return {
-        "rationale": result.get("rationale", ""),
-    }  # type: ignore[return-value]
+        return {
+            "rationale": result.get("rationale", ""),
+        }  # type: ignore[return-value]
+    finally:
+        typing_task.cancel()
 
 
 # ──────────────────────── Imagem (direto) ────────────────────────
@@ -165,8 +174,8 @@ async def process_text(state: WorkflowState) -> WorkflowState:
 async def process_image(state: WorkflowState) -> WorkflowState:
     """Processa mensagem de imagem direta.
 
-    Flow: Enviar status → Download mídia → Analisar imagem +
-          Reverse search → Merge → Verificar legenda → Fact-check.
+    Flow: Enviar status → Typing loop → Download mídia →
+          Analisar imagem + Reverse search (PARALELO) → Merge → Fact-check → Cancelar typing.
     """
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
@@ -180,41 +189,44 @@ async def process_image(state: WorkflowState) -> WorkflowState:
         quoted_message_id=msg_id,
     )
 
-    # 1b. Enviar indicador de digitação (fire-and-forget)
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
+    # 1b. Iniciar indicador de digitação contínuo
+    typing_task = await whatsapp_api.start_typing_loop(msg_id)
 
-    # 2. Download da mídia e converter para base64
-    image_b64 = await whatsapp_api.download_media_as_base64(media_id)
+    try:
+        # 2. Download da mídia e converter para base64
+        image_b64 = await whatsapp_api.download_media_as_base64(media_id)
 
-    # 3. Analisar imagem (analyze-image sub-workflow)
-    image_analysis = await ai_services.analyze_image_content(image_b64)
+        # 3+4. Analisar imagem e Reverse search em PARALELO
+        image_analysis, reverse_result = await asyncio.gather(
+            ai_services.analyze_image_content(image_b64),
+            ai_services.reverse_image_search(image_b64),
+        )
 
-    # 4. Reverse search (reverse-search sub-workflow)
-    reverse_result = await ai_services.reverse_image_search(image_b64)
+        # 5. Montar descrição (merge dos resultados)
+        description = (
+            f"{image_analysis}\n\n"
+            f"Informações de pesquisa reversa da imagem em sites da web: \n"
+            f"{reverse_result}"
+        )
 
-    # 5. Montar descrição (merge dos resultados)
-    description = (
-        f"{image_analysis}\n\n"
-        f"Informações de pesquisa reversa da imagem em sites da web: \n"
-        f"{reverse_result}"
-    )
+        # 6. Legenda extraída no data_extractor (campo caption no state)
+        caption = state.get("caption", "")
 
-    # 6. Legenda extraída no data_extractor (campo caption no state)
-    caption = state.get("caption", "")
+        # 7. Fact-check
+        content_parts = [{"textContent": description, "type": "image"}]
+        if caption:
+            content_parts.append({"textContent": caption, "type": "text"})
 
-    # 7. Fact-check
-    content_parts = [{"textContent": description, "type": "image"}]
-    if caption:
-        content_parts.append({"textContent": caption, "type": "text"})
+        result = await fact_checker.check_content(state["endpoint_api"], content_parts)
 
-    result = await fact_checker.check_content(state["endpoint_api"], content_parts)
-
-    return {
-        "description": description,
-        "caption": caption,
-        "media_base64": image_b64,
-        "rationale": result.get("rationale", ""),
-    }  # type: ignore[return-value]
+        return {
+            "description": description,
+            "caption": caption,
+            "media_base64": image_b64,
+            "rationale": result.get("rationale", ""),
+        }  # type: ignore[return-value]
+    finally:
+        typing_task.cancel()
 
 
 # ──────────────────────── Vídeo (direto) ────────────────────────
@@ -223,8 +235,8 @@ async def process_image(state: WorkflowState) -> WorkflowState:
 async def process_video(state: WorkflowState) -> WorkflowState:
     """Processa mensagem de vídeo direta.
 
-    Flow: Enviar status → Download mídia → Verificar duração → Analisar vídeo →
-          Verificar legenda → Fact-check.
+    Flow: Enviar status → Typing loop → Download mídia → Verificar duração →
+          Analisar vídeo → Fact-check → Cancelar typing.
     """
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
@@ -238,47 +250,51 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         quoted_message_id=msg_id,
     )
 
-    # 1b. Enviar indicador de digitação (fire-and-forget)
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
+    # 1b. Iniciar indicador de digitação contínuo
+    typing_task = await whatsapp_api.start_typing_loop(msg_id)
 
-    # 2. Download da mídia e converter para base64
-    video_b64 = await whatsapp_api.download_media_as_base64(media_id)
-
-    # 3. Verificar duração (máx 2 minutos = 120 segundos)
     try:
-        duration = get_video_duration_from_base64(video_b64)
-    except Exception:
-        duration = 0
+        # 2. Download da mídia e converter para base64
+        video_b64 = await whatsapp_api.download_media_as_base64(media_id)
 
-    if duration >= 120:
-        await whatsapp_api.send_text(
-            remote_jid,
-            "Para que eu possa analizar o conteúdo do vídeo, "
-            "ele precisa ter uma duração máxima de 2 minutos.",
-            quoted_message_id=msg_id,
-        )
-        return {"rationale": "", "duration": duration}  # type: ignore[return-value]
+        # 3. Verificar duração (máx 2 minutos = 120 segundos)
+        try:
+            duration = get_video_duration_from_base64(video_b64)
+        except Exception:
+            duration = 0
 
-    # 4. Analisar vídeo com Gemini
-    description = await ai_services.analyze_video(video_b64)
+        if duration >= 120:
+            typing_task.cancel()
+            await whatsapp_api.send_text(
+                remote_jid,
+                "Para que eu possa analizar o conteúdo do vídeo, "
+                "ele precisa ter uma duração máxima de 2 minutos.",
+                quoted_message_id=msg_id,
+            )
+            return {"rationale": "", "duration": duration}  # type: ignore[return-value]
 
-    # 5. Legenda extraída no data_extractor (campo caption no state)
-    caption = state.get("caption", "")
+        # 4. Analisar vídeo com Gemini
+        description = await ai_services.analyze_video(video_b64)
 
-    # 6. Fact-check
-    content_parts = [{"textContent": description, "type": "video"}]
-    if caption:
-        content_parts.append({"textContent": caption, "type": "text"})
+        # 5. Legenda extraída no data_extractor (campo caption no state)
+        caption = state.get("caption", "")
 
-    result = await fact_checker.check_content(state["endpoint_api"], content_parts)
+        # 6. Fact-check
+        content_parts = [{"textContent": description, "type": "video"}]
+        if caption:
+            content_parts.append({"textContent": caption, "type": "text"})
 
-    return {
-        "description": description,
-        "caption": caption,
-        "media_base64": video_b64,
-        "duration": duration,
-        "rationale": result.get("rationale", ""),
-    }  # type: ignore[return-value]
+        result = await fact_checker.check_content(state["endpoint_api"], content_parts)
+
+        return {
+            "description": description,
+            "caption": caption,
+            "media_base64": video_b64,
+            "duration": duration,
+            "rationale": result.get("rationale", ""),
+        }  # type: ignore[return-value]
+    finally:
+        typing_task.cancel()
 
 
 # ══════════════════════════════════════════════════════════════════════

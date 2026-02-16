@@ -15,6 +15,9 @@ WHATSAPP_API_BASE_URL = (
     f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_NUMBER_ID}"
 )
 
+# ──────────────────────── Redis ────────────────────────
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
 # ──────────────────────── Google Gemini ────────────────────────
 GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")
 
@@ -24,6 +27,8 @@ GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-flash-preview")
 GEMINI_VIDEO_MODEL = os.getenv("GEMINI_VIDEO_MODEL", "gemini-3-flash-preview")
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
+GEMINI_CLASSIFIER_MODEL = os.getenv("GEMINI_CLASSIFIER_MODEL", "gemini-3-flash-preview")
+GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-3-flash-preview")
 
 # ──────────────────────── Google Cloud Vision API ────────────────────────
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")
@@ -39,3 +44,9 @@ FACT_CHECK_API_URL = os.getenv(
 
 # ──────────────────────── Servidor ────────────────────────
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
+
+# ──────────────────────── Debounce ────────────────────────
+MESSAGE_DEBOUNCE_SECONDS = float(os.getenv("MESSAGE_DEBOUNCE_SECONDS", "1.0"))
+
+# ──────────────────────── Histórico de chat ────────────────────────
+CHAT_HISTORY_TTL_SECONDS = int(os.getenv("CHAT_HISTORY_TTL_SECONDS", "300"))  # 5 minutos

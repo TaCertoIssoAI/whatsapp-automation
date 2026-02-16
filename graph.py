@@ -4,9 +4,11 @@ Adaptado para a WhatsApp Business Cloud API.
 Apenas o caminho de mensagem direta (DM) está ativo.
 O caminho de grupo está comentado (migração apenas para DM).
 
-Fluxo DM:
-  extract_data → check_is_on_group → check_initial_message →
-  check_greeting → mark_as_read_direct → Switch6 → processamento → resposta
+Fluxo DM (simplificado — pré-processamento feito no message_handler):
+  extract_data → mark_as_read_direct → Switch6 → processamento → resposta
+
+O pré-processamento (registro, termos, debounce, classificação Gemini)
+é feito antes de invocar o grafo, no módulo message_handler.
 """
 
 import logging
@@ -14,42 +16,20 @@ import logging
 from langgraph.graph import END, StateGraph
 
 from nodes.data_extractor import extract_data
-from nodes.filters import (
-    check_greeting,
-    check_initial_message,
-    check_is_on_group,
-    route_greeting,
-    route_initial_message,
-    route_is_on_group,
-    # ── Grupo (comentado) ──
-    # check_is_mention_of_bot,
-    # check_response_to_message,
-    # route_is_mention_of_bot,
-    # route_response_to_message,
-)
 from nodes.media_processor import (
     process_audio,
     process_image,
     process_text,
     process_video,
-    # ── Grupo (comentado) ──
-    # process_quoted_audio,
-    # process_quoted_image,
-    # process_quoted_text,
-    # process_quoted_video,
 )
 from nodes.response_sender import (
     handle_document_unsupported,
-    handle_greeting,
     mark_as_read_node,
     send_audio_response,
     send_rationale_text,
 )
 from nodes.router import (
     route_direct_message,
-    # ── Grupo (comentado) ──
-    # detect_quoted_message_type,
-    # route_quoted_message,
 )
 from state import WorkflowState
 
@@ -60,36 +40,17 @@ def build_graph() -> StateGraph:
     """Constrói e retorna o grafo LangGraph do workflow."""
     graph = StateGraph(WorkflowState)
 
-    # ─── Nós de extração e filtragem ───
+    # ─── Nós de extração ───
     graph.add_node("extract_data", extract_data)
-    graph.add_node("check_is_on_group", check_is_on_group)
-    graph.add_node("check_initial_message", check_initial_message)
-    graph.add_node("check_greeting", check_greeting)
 
-    # ── Nós de grupo (comentados) ──
-    # graph.add_node("is_mention_of_bot", check_is_mention_of_bot)
-    # graph.add_node("check_response_to_message", check_response_to_message)
-
-    # ─── Nós de marcar como lida e saudação ───
-    graph.add_node("mark_as_read_initial", mark_as_read_node)
+    # ─── Nó de marcar como lida ───
     graph.add_node("mark_as_read_direct", mark_as_read_node)
-    graph.add_node("handle_greeting", handle_greeting)
-
-    # ── Nó de grupo (comentado) ──
-    # graph.add_node("mark_as_read_quoted", mark_as_read_node)
-    # graph.add_node("detect_quoted_type", detect_quoted_message_type)
 
     # ─── Nós de processamento direto (Switch6) ───
     graph.add_node("process_audio", process_audio)
     graph.add_node("process_text", process_text)
     graph.add_node("process_image", process_image)
     graph.add_node("process_video", process_video)
-
-    # ── Nós de grupo (comentados) — processamento quoted (Switch9) ──
-    # graph.add_node("process_quoted_audio", process_quoted_audio)
-    # graph.add_node("process_quoted_text", process_quoted_text)
-    # graph.add_node("process_quoted_image", process_quoted_image)
-    # graph.add_node("process_quoted_video", process_quoted_video)
 
     # ─── Nós de resposta ───
     graph.add_node("handle_document_unsupported", handle_document_unsupported)
@@ -100,21 +61,9 @@ def build_graph() -> StateGraph:
     #  ARESTAS — Caminho DM
     # ════════════════════════════════════
 
-    # Entrada → Extrair dados → Verificar grupo
+    # Entrada → Extrair dados → Marcar como lida → Switch6
     graph.set_entry_point("extract_data")
-    graph.add_edge("extract_data", "check_is_on_group")
-
-    # isOnGroup → (grupo) END | (direto) check_initial_message
-    graph.add_conditional_edges("check_is_on_group", route_is_on_group)
-
-    # ── Caminho DIRETO (DM) ──
-    # check_initial_message → (sim) mark_as_read_initial (END) | (não) check_greeting
-    graph.add_conditional_edges("check_initial_message", route_initial_message)
-    graph.add_edge("mark_as_read_initial", END)
-
-    # check_greeting → (sim) handle_greeting (END) | (não) mark_as_read_direct → Switch6
-    graph.add_conditional_edges("check_greeting", route_greeting)
-    graph.add_edge("handle_greeting", END)
+    graph.add_edge("extract_data", "mark_as_read_direct")
 
     # mark_as_read_direct → Switch6 (roteamento por tipo de mensagem)
     graph.add_conditional_edges("mark_as_read_direct", route_direct_message)
@@ -136,28 +85,6 @@ def build_graph() -> StateGraph:
 
     # ── Enviar áudio → END ──
     graph.add_edge("send_audio_response", END)
-
-    # ════════════════════════════════════
-    #  ARESTAS — Caminho GRUPO (comentado)
-    # ════════════════════════════════════
-
-    # # isMentionOfTheBot → (sim) check_response_to_message | (não) END
-    # graph.add_conditional_edges("is_mention_of_bot", route_is_mention_of_bot)
-    #
-    # # isResponseToMessage → (sim) mark_as_read_quoted | (não) mark_as_read_direct
-    # graph.add_conditional_edges(
-    #     "check_response_to_message", route_response_to_message
-    # )
-    #
-    # # Quoted path: mark_as_read_quoted → detect_quoted_type → route_quoted_message
-    # graph.add_edge("mark_as_read_quoted", "detect_quoted_type")
-    # graph.add_conditional_edges("detect_quoted_type", route_quoted_message)
-    #
-    # # Processamento quoted (Switch9) → Resposta
-    # graph.add_edge("process_quoted_audio", "send_rationale_text")
-    # graph.add_edge("process_quoted_text", "send_rationale_text")
-    # graph.add_edge("process_quoted_image", "send_rationale_text")
-    # graph.add_edge("process_quoted_video", "send_rationale_text")
 
     return graph
 

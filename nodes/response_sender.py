@@ -58,14 +58,21 @@ async def send_audio_response(state: WorkflowState) -> WorkflowState:
         "🗣️🎤 Estou gravando o áudio da resposta...",
     )
 
-    # 2. Enviar indicador de digitação (fire-and-forget)
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
+    # 2. Iniciar indicador de digitação contínuo
+    typing_task = await whatsapp_api.start_typing_loop(msg_id)
 
-    # 3. Gerar áudio via TTS (retorna bytes OGG/Opus)
-    audio_bytes = await ai_services.generate_tts(response_text)
+    try:
+        # 3. Gerar áudio via TTS (retorna bytes OGG/Opus)
+        audio_bytes = await ai_services.generate_tts(response_text)
 
-    # 4. Enviar áudio (upload + send via Cloud API)
-    await whatsapp_api.send_audio(remote_jid, audio_bytes)
+        # 4. Cancelar typing antes de enviar
+        typing_task.cancel()
+
+        # 5. Enviar áudio (upload + send via Cloud API)
+        await whatsapp_api.send_audio(remote_jid, audio_bytes)
+    except Exception:
+        typing_task.cancel()
+        raise
 
     logger.info("Áudio de resposta enviado para %s", remote_jid)
     return {}  # type: ignore[return-value]

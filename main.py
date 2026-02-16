@@ -15,7 +15,7 @@ from fastapi import BackgroundTasks, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 import config
-from graph import compile_graph
+from nodes.message_handler import handle_incoming_message
 
 # ──────────────────────── Logging ────────────────────────
 
@@ -33,9 +33,6 @@ app = FastAPI(
     description="Bot de detecção de fake news para WhatsApp via LangGraph",
     version="2.0.0",
 )
-
-# Compila o grafo uma vez na inicialização
-workflow = compile_graph()
 
 
 # ──────────────────────── Validação de assinatura ────────────────────────
@@ -70,13 +67,8 @@ def _verify_signature(payload: bytes, signature_header: str) -> bool:
 
 
 async def process_message(body: dict) -> None:
-    """Processa a mensagem recebida usando o grafo LangGraph."""
+    """Processa a mensagem recebida usando o handler de mensagens."""
     try:
-        initial_state = {
-            "raw_body": body,
-            "endpoint_api": config.FACT_CHECK_API_URL,
-        }
-
         # Extrair informações básicas para log
         value = (
             body.get("entry", [{}])[0]
@@ -88,12 +80,9 @@ async def process_message(body: dict) -> None:
 
         logger.info("Processando mensagem de %s", sender)
 
-        result = await workflow.ainvoke(initial_state)
+        await handle_incoming_message(body)
 
-        logger.info(
-            "Processamento concluído. Rationale: %s",
-            "presente" if result.get("rationale") else "ausente",
-        )
+        logger.info("Processamento concluído para %s", sender)
 
     except Exception:
         logger.exception("Erro ao processar mensagem")
