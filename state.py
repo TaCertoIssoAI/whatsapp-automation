@@ -21,6 +21,9 @@ class WorkflowState(TypedDict, total=False):
     # Mídia (Cloud API usa media_id para download)
     media_id: str
 
+    # Texto extra concatenado de outras mensagens do batch (debounce)
+    extra_text: str
+
     # Flags de roteamento
     is_group: bool
     is_greeting: bool

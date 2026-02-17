@@ -398,17 +398,60 @@ async def _process_with_classification(sender: str, pending: list[dict]) -> None
 
 
 async def _run_verification(sender: str, pending: list[dict]) -> None:
-    """Executa verificação via grafo LangGraph (prioridade: mídia > texto)."""
-    target_msg = None
-    for msg in reversed(pending):
-        if msg.get("msg_type") in ("audio", "image", "video", "sticker"):
-            target_msg = msg
+    """Executa verificação via grafo LangGraph.
+
+    Coleta todos os textos e legendas em ordem cronológica.
+    Se há mídia, processa apenas a última mídia e passa os textos
+    concatenados como extra_text no state.
+    Se só há texto, concatena tudo e envia como texto.
+    """
+    # Encontrar a última mídia do batch
+    target_media = None
+    target_media_index = -1
+    for i in range(len(pending) - 1, -1, -1):
+        if pending[i].get("msg_type") in ("audio", "image", "video", "sticker"):
+            target_media = pending[i]
+            target_media_index = i
             break
 
-    if target_msg is None:
-        combined_text = " ".join(
-            msg.get("text", "") for msg in pending if msg.get("text")
-        )
+    # Coletar textos e legendas em ordem cronológica
+    text_parts: list[str] = []
+    for i, msg in enumerate(pending):
+        # Texto de mensagens de texto
+        if msg.get("text"):
+            text_parts.append(msg["text"])
+        # Legenda de mídia (exceto da última mídia, pois o grafo já trata caption)
+        if msg.get("caption") and i != target_media_index:
+            text_parts.append(msg["caption"])
+
+    combined_text = "\n".join(text_parts).strip()
+
+    if target_media is not None:
+        # Processar a última mídia + textos concatenados como extra_text
+        raw_body = target_media.get("raw_body")
+        if not raw_body:
+            logger.error("Sem raw_body para verificação do usuário %s", sender)
+            return
+
+        try:
+            workflow = _get_workflow()
+            result = await workflow.ainvoke({
+                "raw_body": raw_body,
+                "endpoint_api": config.FACT_CHECK_API_URL,
+                "extra_text": combined_text,
+            })
+
+            rationale = result.get("rationale", "")
+            if rationale:
+                await redis_client.add_chat_message(sender, "bot", rationale)
+        except Exception:
+            logger.exception("Erro na verificação para %s", sender)
+            await whatsapp_api.send_text(sender, ERROR_MESSAGE)
+    else:
+        # Só textos — concatenar e enviar como texto
+        if not combined_text:
+            return
+
         target_msg = pending[-1]
         raw_body = target_msg.get("raw_body", {})
         if raw_body:
@@ -419,26 +462,20 @@ async def _run_verification(sender: str, pending: list[dict]) -> None:
                     msg_obj["text"]["body"] = combined_text
             except (KeyError, IndexError):
                 pass
-            target_msg = {**target_msg, "raw_body": raw_body}
 
-    raw_body = target_msg.get("raw_body")
-    if not raw_body:
-        logger.error("Sem raw_body para verificação do usuário %s", sender)
-        return
+        try:
+            workflow = _get_workflow()
+            result = await workflow.ainvoke({
+                "raw_body": raw_body,
+                "endpoint_api": config.FACT_CHECK_API_URL,
+            })
 
-    try:
-        workflow = _get_workflow()
-        result = await workflow.ainvoke({
-            "raw_body": raw_body,
-            "endpoint_api": config.FACT_CHECK_API_URL,
-        })
-
-        rationale = result.get("rationale", "")
-        if rationale:
-            await redis_client.add_chat_message(sender, "bot", rationale)
-    except Exception:
-        logger.exception("Erro na verificação para %s", sender)
-        await whatsapp_api.send_text(sender, ERROR_MESSAGE)
+            rationale = result.get("rationale", "")
+            if rationale:
+                await redis_client.add_chat_message(sender, "bot", rationale)
+        except Exception:
+            logger.exception("Erro na verificação para %s", sender)
+            await whatsapp_api.send_text(sender, ERROR_MESSAGE)
 
 
 async def _run_conversation(

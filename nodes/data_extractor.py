@@ -101,6 +101,7 @@ def extract_data(state: WorkflowState) -> WorkflowState:
         "tipo_mensagem": tipo_mensagem,
         "media_id": media_id,
         "caption": caption,
+        "extra_text": state.get("extra_text", ""),
     }
 
     return extracted  # type: ignore[return-value]

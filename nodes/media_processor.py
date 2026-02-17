@@ -89,11 +89,12 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         audio_b64 = await whatsapp_api.download_media_as_base64(media_id)
         transcription = await ai_services.transcribe_audio(audio_b64)
 
-        result = await fact_checker.check_text(
-            state["endpoint_api"],
-            transcription.replace("\n", " "),
-            content_type="audio",
-        )
+        content_parts = [{"textContent": transcription.replace("\n", " "), "type": "audio"}]
+        extra_text = state.get("extra_text", "")
+        if extra_text:
+            content_parts.append({"textContent": extra_text, "type": "text"})
+
+        result = await fact_checker.check_content(state["endpoint_api"], content_parts)
 
         return {
             "transcription": transcription,
@@ -170,10 +171,19 @@ async def process_image(state: WorkflowState) -> WorkflowState:
         )
 
         caption = state.get("caption", "")
+        extra_text = state.get("extra_text", "")
+
+        # Concatenar caption + extra_text como contexto textual
+        text_context_parts = []
+        if caption:
+            text_context_parts.append(caption)
+        if extra_text:
+            text_context_parts.append(extra_text)
+        text_context = "\n".join(text_context_parts)
 
         content_parts = [{"textContent": description, "type": "image"}]
-        if caption:
-            content_parts.append({"textContent": caption, "type": "text"})
+        if text_context:
+            content_parts.append({"textContent": text_context, "type": "text"})
 
         result = await fact_checker.check_content(state["endpoint_api"], content_parts)
 
@@ -224,9 +234,19 @@ async def process_video(state: WorkflowState) -> WorkflowState:
 
         description = await ai_services.analyze_video(video_b64)
         caption = state.get("caption", "")
-        content_parts = [{"textContent": description, "type": "video"}]
+        extra_text = state.get("extra_text", "")
+
+        # Concatenar caption + extra_text como contexto textual
+        text_context_parts = []
         if caption:
-            content_parts.append({"textContent": caption, "type": "text"})
+            text_context_parts.append(caption)
+        if extra_text:
+            text_context_parts.append(extra_text)
+        text_context = "\n".join(text_context_parts)
+
+        content_parts = [{"textContent": description, "type": "video"}]
+        if text_context:
+            content_parts.append({"textContent": text_context, "type": "text"})
 
         result = await fact_checker.check_content(state["endpoint_api"], content_parts)
 
