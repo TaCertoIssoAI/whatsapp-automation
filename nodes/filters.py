@@ -1,8 +1,4 @@
-"""Nós de filtragem e verificação de condições do workflow.
-
-Adaptado para a WhatsApp Business Cloud API.
-Funcionalidades de grupo comentadas (migração apenas para DM).
-"""
+"""Nós de filtragem e verificação de condições do workflow."""
 
 import logging
 import unicodedata
@@ -56,7 +52,6 @@ def check_is_on_group(state: WorkflowState) -> WorkflowState:
     # Na Cloud API, o número de quem enviou é simplesmente o telefone (ex: '5511999999999')
     # Não há sufixo @g.us como na Evolution API
     is_group = False
-    logger.info("isOnGroup: %s", is_group)
     return {"is_group": is_group}  # type: ignore[return-value]
 
 
@@ -71,77 +66,10 @@ def route_is_on_group(state: WorkflowState) -> str:
     return "check_initial_message"
 
 
-# ══════════════════════════════════════════════════════════════════════
-# FUNCIONALIDADES DE GRUPO — Comentadas (migração apenas para DM)
-# ══════════════════════════════════════════════════════════════════════
-
-# def check_is_mention_of_bot(state: WorkflowState) -> WorkflowState:
-#     """Verifica se o bot foi mencionado na mensagem do grupo."""
-#     body = state.get("raw_body", {})
-#     data = body.get("data", {})
-#     context_info = get_context_info(data)
-#     mentioned_jids = context_info.get("mentionedJid", [])
-#
-#     if not isinstance(mentioned_jids, list):
-#         mentioned_jids = []
-#
-#     if mentioned_jids:
-#         logger.info(
-#             "mentionedJid encontrados: %s (BOT_MENTION_JID configurado: %s)",
-#             mentioned_jids,
-#             config.BOT_MENTION_JID,
-#         )
-#
-#     bot_jid = config.BOT_MENTION_JID
-#     bot_number = bot_jid.split("@")[0] if bot_jid else ""
-#
-#     is_mention = False
-#     if mentioned_jids:
-#         for jid in mentioned_jids:
-#             jid_number = jid.split("@")[0] if isinstance(jid, str) else ""
-#             if jid == bot_jid or (bot_number and jid_number == bot_number):
-#                 is_mention = True
-#                 break
-#
-#     logger.info("isMentionOfTheBot: %s", is_mention)
-#     return {"is_mention_of_bot": is_mention}
-
-
-# def route_is_mention_of_bot(state: WorkflowState) -> str:
-#     """Decide a rota baseado em se o bot foi mencionado."""
-#     if state.get("is_mention_of_bot"):
-#         return "check_response_to_message"
-#     return "__end__"
-
-
-# def check_response_to_message(state: WorkflowState) -> WorkflowState:
-#     """Verifica se a mensagem é uma resposta (tem quotedMessage)."""
-#     body = state.get("raw_body", {})
-#     data = body.get("data", {})
-#     context_info = get_context_info(data)
-#     quoted_message = context_info.get("quotedMessage")
-#
-#     has_quoted = quoted_message is not None and isinstance(quoted_message, dict)
-#     logger.info("isResponseToMessage: %s", has_quoted)
-#     return {"is_response_to_message": has_quoted}
-
-
-# def route_response_to_message(state: WorkflowState) -> str:
-#     """Decide a rota: se tem quoted → Switch9, senão → Switch6."""
-#     if state.get("is_response_to_message"):
-#         return "mark_as_read_quoted"
-#     return "mark_as_read_direct"
-
-# ══════════════════════════════════════════════════════════════════════
-# FIM — Funcionalidades de grupo
-# ══════════════════════════════════════════════════════════════════════
-
-
 def check_initial_message(state: WorkflowState) -> WorkflowState:
     """Verifica se é a mensagem inicial do bot (contém link de termos)."""
     mensagem = state.get("mensagem", "")
     is_initial = "tacertoissoai.com.br/termos-e-privacidade" in mensagem
-    logger.info("isInitialMessage: %s", is_initial)
     return {"is_initial_message": is_initial}  # type: ignore[return-value]
 
 
@@ -157,7 +85,6 @@ def check_greeting(state: WorkflowState) -> WorkflowState:
     mensagem = state.get("mensagem", "")
     normalized = _normalize_text(mensagem)
     is_greeting = normalized in GREETINGS
-    logger.info("isGreeting: %s (normalized='%s')", is_greeting, normalized)
     return {"is_greeting": is_greeting}  # type: ignore[return-value]
 
 

@@ -65,9 +65,7 @@ async def transcribe_audio(audio_base64: str) -> str:
 
     response = await asyncio.to_thread(_call)
 
-    text = response.text or ""
-    logger.info("Áudio transcrito com sucesso via Gemini (%d chars)", len(text))
-    return text
+    return response.text or ""
 
 
 # ──────────────────────── Gemini — TTS ────────────────────────
@@ -125,7 +123,6 @@ async def generate_tts(text: str) -> bytes:
     # Converter PCM bruto → OGG/Opus para compatibilidade com WhatsApp Cloud API
     ogg_bytes = await asyncio.to_thread(_pcm_to_ogg_opus, audio_data)
 
-    logger.info("TTS gerado com sucesso via Gemini (%d bytes OGG/Opus)", len(ogg_bytes))
     return ogg_bytes
 
 
@@ -179,18 +176,11 @@ async def analyze_video(video_base64: str) -> str:
                     f"Timeout aguardando processamento do vídeo "
                     f"(estado: {uploaded_file.state.name})"
                 )
-            logger.info(
-                "Aguardando processamento do vídeo... (estado: %s, %ds)",
-                uploaded_file.state.name,
-                waited,
-            )
             await asyncio.sleep(poll_interval)
             waited += poll_interval
             uploaded_file = await asyncio.to_thread(
                 client.files.get, name=uploaded_file.name
             )
-
-        logger.info("Arquivo de vídeo pronto (estado: ACTIVE)")
 
         # Chamada síncrona em thread separada
         def _generate():
@@ -200,9 +190,7 @@ async def analyze_video(video_base64: str) -> str:
             )
 
         response = await asyncio.to_thread(_generate)
-        description = response.text or ""
-        logger.info("Vídeo analisado com sucesso (%d chars)", len(description))
-        return description
+        return response.text or ""
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -263,9 +251,7 @@ async def analyze_image_content(image_base64: str) -> str:
 
     response = await asyncio.to_thread(_call)
 
-    analysis = response.text or ""
-    logger.info("Imagem analisada com sucesso via Gemini (%d chars)", len(analysis))
-    return analysis
+    return response.text or ""
 
 
 # ──────────────────────── Google Cloud Vision — Reverse Image Search ──────
@@ -359,9 +345,7 @@ async def reverse_image_search(image_base64: str) -> str:
             resp.raise_for_status()
             result = resp.json()
 
-        parsed = _parse_web_detection(result)
-        logger.info("Reverse image search concluída (%d chars)", len(parsed))
-        return parsed
+        return _parse_web_detection(result)
 
     except Exception as e:
         logger.warning("Reverse image search falhou: %s", e)

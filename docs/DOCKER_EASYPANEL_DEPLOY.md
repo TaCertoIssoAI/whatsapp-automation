@@ -225,12 +225,12 @@ Sempre que fizer alterações no código:
 docker build -t whatsapp-integration:latest .
 
 # 2. Fazer tag com a versão
-docker tag whatsapp-integration:latest seu-usuario/whatsapp-integration:v1.1.0
-docker tag whatsapp-integration:latest seu-usuario/whatsapp-integration:latest
+docker tag whatsapp-integration:latest tacertoissoai/whatsapp-integration:v1.1.0
+docker tag whatsapp-integration:latest tacertoissoai/whatsapp-integration:latest
 
 # 3. Push para o Docker Hub
-docker push seu-usuario/whatsapp-integration:v1.1.0
-docker push seu-usuario/whatsapp-integration:latest
+docker push tacertoissoai/whatsapp-integration:v1.1.0
+docker push tacertoissoai/whatsapp-integration:latest
 
 # 4. No EasyPanel, vá para o serviço e clique em "Redeploy" ou "Restart"
 # Ele vai baixar a nova imagem automaticamente

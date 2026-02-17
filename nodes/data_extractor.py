@@ -1,8 +1,4 @@
-"""Nó de extração de dados do webhook (equivalente ao nó 'Pegar dados' do n8n).
-
-Adaptado para o formato de webhook da WhatsApp Business Cloud API.
-Formato: body.entry[0].changes[0].value.messages[0]
-"""
+"""Extração de dados do webhook da WhatsApp Business Cloud API."""
 
 import logging
 from typing import Any
@@ -134,12 +130,5 @@ def extract_data(state: WorkflowState) -> WorkflowState:
         "media_id": media_id,
         "caption": caption,
     }
-
-    logger.info(
-        "Dados extraídos — de=%s, tipo=%s, media_id=%s",
-        extracted["numero_quem_enviou"],
-        extracted["tipo_mensagem"],
-        extracted["media_id"] or "(nenhum)",
-    )
 
     return extracted  # type: ignore[return-value]

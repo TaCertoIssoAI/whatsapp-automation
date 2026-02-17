@@ -1,11 +1,6 @@
-"""Chamadas à API de fact-checking do TaCertoIssoAI.
+"""Chamadas à API de fact-checking do TaCertoIssoAI."""
 
-Equivalente aos nós HTTP Request8, HTTP Request13, HTTP Request15,
-HTTP Request16, HTTP Request18, HTTP Request23 do n8n.
-
-Todos chamam o endpoint POST /text com payloads diferentes.
-"""
-
+import asyncio
 import logging
 
 import httpx
@@ -13,6 +8,48 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [2, 4, 8]  # segundos
+
+
+async def _post_with_retry(url: str, payload: dict) -> dict:
+    """POST com retry e exponential backoff para erros 5xx."""
+    last_exc: Exception | None = None
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                resp = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as e:
+            last_exc = e
+            if e.response.status_code >= 500 and attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_DELAYS[attempt]
+                logger.warning(
+                    "Fact-check API retornou %d, tentativa %d/%d, retry em %ds",
+                    e.response.status_code, attempt + 1, _MAX_RETRIES, delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except (httpx.ConnectError, httpx.ReadTimeout) as e:
+            last_exc = e
+            if attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_DELAYS[attempt]
+                logger.warning(
+                    "Fact-check API erro de conexão, tentativa %d/%d, retry em %ds",
+                    attempt + 1, _MAX_RETRIES, delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
+
+    raise last_exc  # type: ignore[misc]
 
 
 async def check_text(
@@ -20,71 +57,19 @@ async def check_text(
     text_content: str,
     content_type: str = "text",
 ) -> dict:
-    """Envia texto para a API de fact-checking.
-
-    Args:
-        endpoint_api: URL base da API.
-        text_content: Conteúdo textual a verificar.
-        content_type: Tipo do conteúdo ('text', 'audio', 'image', 'video').
-
-    Returns:
-        Resposta da API com 'rationale' e opcionalmente 'responseWithoutLinks'.
-    """
     url = f"{endpoint_api.rstrip('/')}/text"
     payload = {
         "content": [
-            {
-                "textContent": text_content,
-                "type": content_type,
-            }
+            {"textContent": text_content, "type": content_type},
         ]
     }
-
-    logger.info("Fact-check — tipo=%s, url=%s", content_type, url)
-
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(
-            url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        logger.info("Fact-check resultado recebido")
-        return result
+    return await _post_with_retry(url, payload)
 
 
 async def check_content(
     endpoint_api: str,
     content_parts: list[dict],
 ) -> dict:
-    """Envia múltiplos conteúdos para a API de fact-checking.
-
-    Usado quando há conteúdo composto (ex: imagem + legenda, vídeo + legenda).
-
-    Args:
-        endpoint_api: URL base da API.
-        content_parts: Lista de dicts com 'textContent' e 'type'.
-
-    Returns:
-        Resposta da API com 'rationale'.
-    """
     url = f"{endpoint_api.rstrip('/')}/text"
     payload = {"content": content_parts}
-
-    logger.info(
-        "Fact-check (multi) — %d parts, url=%s",
-        len(content_parts),
-        url,
-    )
-
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(
-            url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        logger.info("Fact-check (multi) resultado recebido")
-        return result
+    return await _post_with_retry(url, payload)
