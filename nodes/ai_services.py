@@ -52,13 +52,18 @@ async def transcribe_audio(audio_base64: str) -> str:
     client = _get_gemini_client()
     audio_bytes = base64.b64decode(audio_base64)
 
-    response = client.models.generate_content(
-        model=config.GEMINI_TRANSCRIPTION_MODEL,
-        contents=[
-            types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp3"),
-            TRANSCRIPTION_PROMPT,
-        ],
-    )
+    # Rodar chamada síncrona do Gemini SDK em thread separada
+    # para não bloquear o event loop do asyncio
+    def _call():
+        return client.models.generate_content(
+            model=config.GEMINI_TRANSCRIPTION_MODEL,
+            contents=[
+                types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp3"),
+                TRANSCRIPTION_PROMPT,
+            ],
+        )
+
+    response = await asyncio.to_thread(_call)
 
     text = response.text or ""
     logger.info("Áudio transcrito com sucesso via Gemini (%d chars)", len(text))
@@ -96,20 +101,24 @@ async def generate_tts(text: str) -> bytes:
 
     client = _get_gemini_client()
 
-    response = client.models.generate_content(
-        model=config.GEMINI_TTS_MODEL,
-        contents=text,
-        config=types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=config.GEMINI_TTS_VOICE,
+    # Rodar chamada síncrona do Gemini SDK em thread separada
+    def _call():
+        return client.models.generate_content(
+            model=config.GEMINI_TTS_MODEL,
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=config.GEMINI_TTS_VOICE,
+                        )
                     )
-                )
+                ),
             ),
-        ),
-    )
+        )
+
+    response = await asyncio.to_thread(_call)
 
     audio_data = response.candidates[0].content.parts[0].inline_data.data
 
@@ -153,7 +162,8 @@ async def analyze_video(video_base64: str) -> str:
         tmp_path = Path(tmp.name)
 
     try:
-        uploaded_file = client.files.upload(file=tmp_path)
+        # Upload síncrono em thread separada para não bloquear o event loop
+        uploaded_file = await asyncio.to_thread(client.files.upload, file=tmp_path)
 
         # Aguardar até o arquivo ficar ACTIVE (processamento do Gemini)
         max_wait = 60  # segundos
@@ -176,14 +186,20 @@ async def analyze_video(video_base64: str) -> str:
             )
             await asyncio.sleep(poll_interval)
             waited += poll_interval
-            uploaded_file = client.files.get(name=uploaded_file.name)
+            uploaded_file = await asyncio.to_thread(
+                client.files.get, name=uploaded_file.name
+            )
 
         logger.info("Arquivo de vídeo pronto (estado: ACTIVE)")
 
-        response = client.models.generate_content(
-            model=config.GEMINI_VIDEO_MODEL,
-            contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
-        )
+        # Chamada síncrona em thread separada
+        def _generate():
+            return client.models.generate_content(
+                model=config.GEMINI_VIDEO_MODEL,
+                contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
+            )
+
+        response = await asyncio.to_thread(_generate)
         description = response.text or ""
         logger.info("Vídeo analisado com sucesso (%d chars)", len(description))
         return description
@@ -235,13 +251,17 @@ async def analyze_image_content(image_base64: str) -> str:
 
     image_bytes = base64.b64decode(image_base64)
 
-    response = client.models.generate_content(
-        model=config.GEMINI_IMAGE_MODEL,
-        contents=[
-            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-            IMAGE_ANALYSIS_PROMPT,
-        ],
-    )
+    # Rodar chamada síncrona do Gemini SDK em thread separada
+    def _call():
+        return client.models.generate_content(
+            model=config.GEMINI_IMAGE_MODEL,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                IMAGE_ANALYSIS_PROMPT,
+            ],
+        )
+
+    response = await asyncio.to_thread(_call)
 
     analysis = response.text or ""
     logger.info("Imagem analisada com sucesso via Gemini (%d chars)", len(analysis))

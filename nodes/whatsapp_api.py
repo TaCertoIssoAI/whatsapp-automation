@@ -265,4 +265,15 @@ def send_typing_fire_and_forget(message_id: str) -> None:
 
     Equivalente ao send_presence_fire_and_forget da Evolution API.
     """
-    asyncio.create_task(send_typing_indicator(message_id))
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(send_typing_indicator(message_id))
+        # Callback para logar erros sem silenciá-los
+        task.add_done_callback(
+            lambda t: t.exception() if not t.cancelled() and t.exception() else None
+        )
+    except RuntimeError:
+        logger.warning(
+            "Sem event loop ativo para enviar indicador de digitação (msg=%s)",
+            message_id,
+        )

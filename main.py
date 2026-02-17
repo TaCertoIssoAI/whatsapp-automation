@@ -6,12 +6,14 @@ Endpoints:
 - GET  /health   → Health check
 """
 
+import asyncio
 import hashlib
 import hmac
 import logging
+import time
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 import config
@@ -31,11 +33,41 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="TaCertoIssoAI - Fake News Detector",
     description="Bot de detecção de fake news para WhatsApp via LangGraph",
-    version="2.0.0",
+    version="2.1.0",
 )
 
 # Compila o grafo uma vez na inicialização
 workflow = compile_graph()
+
+
+# ──────────────────────── Deduplicação de mensagens ────────────────────────
+
+# Cache de IDs de mensagens já processadas para evitar duplicatas.
+# O WhatsApp pode reenviar o webhook se não receber 200 rápido o suficiente.
+_processed_messages: dict[str, float] = {}
+_DEDUP_TTL_SECONDS = 300  # 5 minutos
+_dedup_lock = asyncio.Lock()
+
+
+async def _is_duplicate(message_id: str) -> bool:
+    """Verifica se a mensagem já foi processada (deduplicação).
+
+    Retorna True se a mensagem já existe no cache (duplicata).
+    Caso contrário, registra no cache e retorna False.
+    """
+    now = time.monotonic()
+
+    async with _dedup_lock:
+        # Limpar entradas expiradas periodicamente
+        expired = [k for k, t in _processed_messages.items() if now - t > _DEDUP_TTL_SECONDS]
+        for k in expired:
+            del _processed_messages[k]
+
+        if message_id in _processed_messages:
+            return True
+
+        _processed_messages[message_id] = now
+        return False
 
 
 # ──────────────────────── Validação de assinatura ────────────────────────
@@ -69,8 +101,11 @@ def _verify_signature(payload: bytes, signature_header: str) -> bool:
 # ──────────────────────── Processamento assíncrono ────────────────────────
 
 
-async def process_message(body: dict) -> None:
-    """Processa a mensagem recebida usando o grafo LangGraph."""
+async def process_message(body: dict, message_id: str) -> None:
+    """Processa a mensagem recebida usando o grafo LangGraph.
+
+    Roda como task independente no event loop, sem bloquear o webhook.
+    """
     try:
         initial_state = {
             "raw_body": body,
@@ -86,17 +121,18 @@ async def process_message(body: dict) -> None:
         messages = value.get("messages", [])
         sender = messages[0].get("from", "unknown") if messages else "unknown"
 
-        logger.info("Processando mensagem de %s", sender)
+        logger.info("[%s] Processando mensagem de %s", message_id, sender)
 
         result = await workflow.ainvoke(initial_state)
 
         logger.info(
-            "Processamento concluído. Rationale: %s",
+            "[%s] Processamento concluído. Rationale: %s",
+            message_id,
             "presente" if result.get("rationale") else "ausente",
         )
 
     except Exception:
-        logger.exception("Erro ao processar mensagem")
+        logger.exception("[%s] Erro ao processar mensagem", message_id)
 
 
 # ──────────────────────── Endpoints ────────────────────────
@@ -128,12 +164,14 @@ async def webhook_verify(
 
 
 @app.post("/webhook")
-async def webhook_receive(
-    request: Request, background_tasks: BackgroundTasks
-) -> JSONResponse:
+async def webhook_receive(request: Request) -> JSONResponse:
     """Endpoint webhook que recebe mensagens da WhatsApp Cloud API.
 
-    Valida a assinatura X-Hub-Signature-256 e processa a mensagem em background.
+    Valida a assinatura X-Hub-Signature-256 e processa a mensagem
+    como task assíncrona independente via asyncio.create_task().
+
+    IMPORTANTE: Responde 200 imediatamente ao WhatsApp para evitar
+    retries. O processamento real acontece em background.
     """
     payload = await request.body()
 
@@ -165,15 +203,30 @@ async def webhook_receive(
             message = messages[0]
             sender = message.get("from", "unknown")
             msg_type = message.get("type", "unknown")
+            msg_id = message.get("id", "")
+
+            # ── Deduplicação: evitar processar a mesma mensagem 2x ──
+            if msg_id and await _is_duplicate(msg_id):
+                logger.warning(
+                    "Mensagem duplicada ignorada — id=%s, de=%s",
+                    msg_id, sender,
+                )
+                continue
 
             logger.info(
-                "Webhook recebido — de=%s, tipo=%s",
+                "Webhook recebido — id=%s, de=%s, tipo=%s",
+                msg_id,
                 sender,
                 msg_type,
             )
 
-            # Processa em background para responder rapidamente ao webhook
-            background_tasks.add_task(process_message, body)
+            # Processa como task independente no event loop.
+            # Diferente de BackgroundTasks, isso NÃO bloqueia o worker
+            # e permite processar múltiplas mensagens em paralelo.
+            asyncio.create_task(
+                process_message(body, msg_id),
+                name=f"process-{msg_id}",
+            )
 
     return JSONResponse(content={"status": "received"}, status_code=200)
 
@@ -181,7 +234,16 @@ async def webhook_receive(
 @app.get("/health")
 async def health_check() -> JSONResponse:
     """Health check endpoint."""
-    return JSONResponse(content={"status": "ok"}, status_code=200)
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "active_tasks": len([
+                t for t in asyncio.all_tasks()
+                if t.get_name().startswith("process-")
+            ]),
+        },
+        status_code=200,
+    )
 
 
 # ──────────────────────── Main ────────────────────────
@@ -194,4 +256,7 @@ if __name__ == "__main__":
         port=config.WEBHOOK_PORT,
         reload=False,
         log_level="info",
+        # Timeout maior para evitar que o uvicorn mate conexões durante
+        # processamento longo em background
+        timeout_keep_alive=65,
     )
