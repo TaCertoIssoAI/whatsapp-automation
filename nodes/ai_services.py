@@ -1,11 +1,4 @@
-"""Serviços de inteligência artificial — 100% Google Gemini.
-
-- Gemini (transcrição de áudio)
-- Gemini TTS (text-to-speech)
-- Gemini (análise de imagem — sub-workflow analyze-image)
-- Gemini (análise de vídeo)
-- Google Cloud Vision API (reverse image search — sub-workflow reverse-search)
-"""
+"""Serviços de inteligência artificial — 100% Google Gemini."""
 
 import asyncio
 import base64
@@ -21,14 +14,19 @@ import config
 logger = logging.getLogger(__name__)
 
 
-# ──────────────────────── Gemini Client (lazy) ────────────────────────
+# ──────────────────────── Gemini Client (singleton) ────────────────────────
+
+_gemini_client = None
+_gemini_lock = asyncio.Lock()
 
 
 def _get_gemini_client():
-    """Retorna um cliente Gemini (criado sob demanda)."""
-    from google import genai
-
-    return genai.Client(api_key=config.GOOGLE_GEMINI_API_KEY)
+    """Retorna cliente Gemini singleton (reutilizável entre requisições)."""
+    global _gemini_client
+    if _gemini_client is None:
+        from google import genai
+        _gemini_client = genai.Client(api_key=config.GOOGLE_GEMINI_API_KEY)
+    return _gemini_client
 
 
 # ──────────────────────── Gemini — Transcrição de Áudio ────────────────────────
@@ -61,7 +59,6 @@ async def transcribe_audio(audio_base64: str) -> str:
     )
 
     text = response.text or ""
-    logger.info("Áudio transcrito com sucesso via Gemini (%d chars)", len(text))
     return text
 
 
@@ -115,8 +112,6 @@ async def generate_tts(text: str) -> bytes:
 
     # Converter PCM bruto → OGG/Opus para compatibilidade com WhatsApp Cloud API
     ogg_bytes = await asyncio.to_thread(_pcm_to_ogg_opus, audio_data)
-
-    logger.info("TTS gerado com sucesso via Gemini (%d bytes OGG/Opus)", len(ogg_bytes))
     return ogg_bytes
 
 
@@ -169,24 +164,17 @@ async def analyze_video(video_base64: str) -> str:
                     f"Timeout aguardando processamento do vídeo "
                     f"(estado: {uploaded_file.state.name})"
                 )
-            logger.info(
-                "Aguardando processamento do vídeo... (estado: %s, %ds)",
-                uploaded_file.state.name,
-                waited,
-            )
             await asyncio.sleep(poll_interval)
             waited += poll_interval
             uploaded_file = client.files.get(name=uploaded_file.name)
 
-        logger.info("Arquivo de vídeo pronto (estado: ACTIVE)")
+        logger.info("Arquivo de vídeo pronto para análise")
 
         response = client.models.generate_content(
             model=config.GEMINI_VIDEO_MODEL,
             contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
         )
-        description = response.text or ""
-        logger.info("Vídeo analisado com sucesso (%d chars)", len(description))
-        return description
+        return response.text or ""
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -244,7 +232,6 @@ async def analyze_image_content(image_base64: str) -> str:
     )
 
     analysis = response.text or ""
-    logger.info("Imagem analisada com sucesso via Gemini (%d chars)", len(analysis))
     return analysis
 
 
@@ -256,10 +243,7 @@ _VISION_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 
 
 def _parse_web_detection(response_data: dict) -> str:
-    """Parseia a resposta da Google Cloud Vision API WEB_DETECTION.
-
-    Equivalente ao 'Code in JavaScript' do sub-workflow reverse-search do n8n.
-    """
+    """Parseia a resposta da Google Cloud Vision API WEB_DETECTION."""
     detection = (
         response_data
         .get("responses", [{}])[0]
@@ -269,7 +253,6 @@ def _parse_web_detection(response_data: dict) -> str:
     if (
         not detection
         or not detection.get("fullMatchingImages")
-        or len(detection["fullMatchingImages"]) == 0
     ):
         return "Nenhuma correspondência completa encontrada para esta imagem."
 
@@ -299,17 +282,9 @@ def _parse_web_detection(response_data: dict) -> str:
 
 
 async def reverse_image_search(image_base64: str) -> str:
-    """Realiza pesquisa reversa de imagem usando Google Cloud Vision API.
-
-    Equivalente ao sub-workflow 'reverse-search' do n8n.
-    Usa o endpoint WEB_DETECTION da Vision API com OAuth2/API key.
-    """
+    """Pesquisa reversa de imagem via Google Cloud Vision API."""
     api_key = config.GOOGLE_CLOUD_API_KEY
     if not api_key:
-        logger.warning(
-            "GOOGLE_CLOUD_API_KEY não configurada, "
-            "pulando reverse image search."
-        )
         return "Pesquisa reversa não disponível (API key não configurada)."
 
     url = f"{_VISION_API_URL}?key={api_key}"
@@ -340,11 +315,9 @@ async def reverse_image_search(image_base64: str) -> str:
             result = resp.json()
 
         parsed = _parse_web_detection(result)
-        logger.info("Reverse image search concluída (%d chars)", len(parsed))
         return parsed
 
-    except Exception as e:
-        logger.warning("Reverse image search falhou: %s", e)
+    except Exception:
         return "Não foi possível realizar a pesquisa reversa da imagem."
 
 
@@ -393,7 +366,6 @@ async def classify_message(messages: list[str]) -> str:
             contents=prompt,
         )
         result = (response.text or "").strip().upper()
-        logger.info("Classificação Gemini: %s", result)
 
         if "VERIFICAR" in result:
             return "VERIFICAR"
@@ -409,9 +381,9 @@ async def classify_message(messages: list[str]) -> str:
 CHAT_SYSTEM_PROMPT = """Você é o assistente do TaCertoIssoAI, uma ferramenta de verificação de fake news pelo WhatsApp.
 
 Sobre o TaCertoIssoAI:
-Tá Certo Isso AI é uma ferramenta criada por estudantes de Ciência da Computação da Universidade Federal de Goiás (UFG) para combater a desinformação. Ela utiliza inteligência artificial para verificar se notícias, imagens, vídeos e áudios compartilhados no WhatsApp são verdadeiros ou falsos. O objetivo é oferecer uma forma simples e acessível de checar informações, ajudando as pessoas a identificar fake news antes de compartilhá-las. O projeto é sem fins lucrativos e voltado ao interesse público.
+Tá Certo Isso AI é uma ferramenta criada por estudantes de Ciência da Computação da Universidade de São Paulo (USP) para combater a desinformação. Ela utiliza inteligência artificial para verificar se notícias, imagens, vídeos e áudios compartilhados no WhatsApp são verdadeiros ou falsos. O objetivo é oferecer uma forma simples e acessível de checar informações, ajudando as pessoas a identificar fake news antes de compartilhá-las. O projeto é sem fins lucrativos e voltado ao interesse público.
 
-Seu objetivo principal é ajudar os usuários a verificarem informações, notícias e conteúdos que possam ser fake news.
+Seu objetivo principal é ajudar os usuários a verificarem informações, notícias e conteúdos que possam ser fake news. O usuário pode utilizar o serviço apenas adicionando o número do bot no WhatsApp e enviando o conteúdo que deseja verificar (texto, imagem, vídeo, link ou áudio) para o WhatsApp do Tá Certo Isso AI.
 
 Regras:
 1. Seja simpático, educado e conciso nas respostas.
@@ -460,10 +432,9 @@ async def generate_chat_response(
             contents=prompt,
         )
         text = (response.text or "").strip()
-        logger.info("Resposta conversacional gerada (%d chars)", len(text))
         return text
-    except Exception as e:
-        logger.error("Erro ao gerar resposta conversacional: %s", e)
+    except Exception:
+        logger.exception("Erro ao gerar resposta conversacional")
         return (
             "Desculpe, tive um problema ao processar sua mensagem. "
             "Você pode enviar o conteúdo que deseja verificar (texto, imagem, vídeo, link ou áudio)."

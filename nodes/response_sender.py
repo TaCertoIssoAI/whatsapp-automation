@@ -1,15 +1,7 @@
-"""Nós de envio de resposta ao usuário.
-
-Adaptado para a WhatsApp Business Cloud API.
-Usa whatsapp_api em vez de evolution_api.
-"""
-
-import logging
+"""Nós de envio de resposta ao usuário."""
 
 from nodes import ai_services, whatsapp_api
 from state import WorkflowState
-
-logger = logging.getLogger(__name__)
 
 
 async def send_rationale_text(state: WorkflowState) -> WorkflowState:
@@ -19,7 +11,6 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
     """
     rationale = state.get("rationale", "")
     if not rationale:
-        logger.info("Sem rationale para enviar, pulando.")
         return {}  # type: ignore[return-value]
 
     remote_jid = state["numero_quem_enviou"]
@@ -34,7 +25,6 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
         quoted_message_id=msg_id,
     )
 
-    logger.info("Rationale enviado como texto para %s", remote_jid)
     return {}  # type: ignore[return-value]
 
 
@@ -46,35 +36,26 @@ async def send_audio_response(state: WorkflowState) -> WorkflowState:
     """
     response_text = state.get("response_without_links", state.get("rationale", ""))
     if not response_text:
-        logger.info("Sem texto para gerar áudio, pulando.")
         return {}  # type: ignore[return-value]
 
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
 
-    # 1. Enviar mensagem de status
     await whatsapp_api.send_text(
         remote_jid,
         "🗣️🎤 Estou gravando o áudio da resposta...",
     )
 
-    # 2. Iniciar indicador de digitação contínuo
     typing_task = await whatsapp_api.start_typing_loop(msg_id)
 
     try:
-        # 3. Gerar áudio via TTS (retorna bytes OGG/Opus)
         audio_bytes = await ai_services.generate_tts(response_text)
-
-        # 4. Cancelar typing antes de enviar
         typing_task.cancel()
-
-        # 5. Enviar áudio (upload + send via Cloud API)
         await whatsapp_api.send_audio(remote_jid, audio_bytes)
     except Exception:
         typing_task.cancel()
         raise
 
-    logger.info("Áudio de resposta enviado para %s", remote_jid)
     return {}  # type: ignore[return-value]
 
 
@@ -83,17 +64,12 @@ async def handle_greeting(state: WorkflowState) -> WorkflowState:
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
 
-    # Marcar como lida
     await whatsapp_api.mark_as_read(msg_id)
-
-    # Enviar instrução
     await whatsapp_api.send_text(
         remote_jid,
         "Vc pode enviar a mensagem, imagem, vídeo, link ou áudio que quer verificar.",
         quoted_message_id=msg_id,
     )
-
-    logger.info("Saudação respondida para %s", remote_jid)
     return {}  # type: ignore[return-value]
 
 
@@ -109,7 +85,6 @@ async def handle_document_unsupported(state: WorkflowState) -> WorkflowState:
         quoted_message_id=msg_id,
     )
 
-    logger.info("Documento não suportado — respondido para %s", remote_jid)
     return {}  # type: ignore[return-value]
 
 

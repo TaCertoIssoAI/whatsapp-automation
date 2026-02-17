@@ -1,24 +1,11 @@
-"""Roteamento por tipo de mensagem (equivalente ao nó Switch6 do n8n).
-
-Adaptado para os tipos da WhatsApp Business Cloud API.
-Funcionalidades de grupo (Switch9 / quoted messages) comentadas.
-"""
-
-import logging
+"""Roteamento por tipo de mensagem (Switch6)."""
 
 from state import WorkflowState
 
-logger = logging.getLogger(__name__)
-
 
 def route_direct_message(state: WorkflowState) -> str:
-    """Switch6: Roteia mensagens diretas pelo tipo de mensagem.
-
-    Tipos da Cloud API: audio, text, image, sticker, video, document.
-    Sticker é tratado como imagem.
-    """
+    """Roteia mensagens diretas pelo tipo."""
     tipo = state.get("tipo_mensagem", "")
-    logger.info("Switch6 — tipo_mensagem: %s", tipo)
 
     mapping = {
         "audio": "process_audio",
@@ -27,14 +14,11 @@ def route_direct_message(state: WorkflowState) -> str:
         "sticker": "process_image",
         "video": "process_video",
         "document": "handle_document_unsupported",
-        # Tipos interativos tratados como texto
         "interactive": "process_text",
         "button": "process_text",
     }
 
-    route = mapping.get(tipo, "handle_document_unsupported")
-    logger.info("Switch6 — rota selecionada: %s", route)
-    return route
+    return mapping.get(tipo, "handle_document_unsupported")
 
 
 # ══════════════════════════════════════════════════════════════════════

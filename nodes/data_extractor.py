@@ -1,8 +1,4 @@
-"""Nó de extração de dados do webhook (equivalente ao nó 'Pegar dados' do n8n).
-
-Adaptado para o formato de webhook da WhatsApp Business Cloud API.
-Formato: body.entry[0].changes[0].value.messages[0]
-"""
+"""Extração de dados do payload do webhook."""
 
 import logging
 from typing import Any
@@ -79,26 +75,7 @@ def _extract_caption(message: dict[str, Any]) -> str:
 
 
 def extract_data(state: WorkflowState) -> WorkflowState:
-    """Extrai os dados relevantes do payload do webhook da WhatsApp Cloud API.
-
-    Formato da Cloud API:
-    {
-      "entry": [{
-        "changes": [{
-          "value": {
-            "messages": [{
-              "from": "5511999999999",
-              "id": "wamid.xxx",
-              "type": "text|audio|image|video|sticker|document",
-              "text": {"body": "..."},
-              ...
-            }],
-            "contacts": [{"profile": {"name": "..."}}]
-          }
-        }]
-      }]
-    }
-    """
+    """Extrai os dados relevantes do payload do webhook."""
     body = state["raw_body"]
     value = _get_message_data(body)
     message = _get_message(value)
@@ -107,20 +84,11 @@ def extract_data(state: WorkflowState) -> WorkflowState:
         logger.warning("Nenhuma mensagem encontrada no payload")
         return {}  # type: ignore[return-value]
 
-    # Contexto de citação (reply)
     context = message.get("context", {})
     stanza_id = context.get("id", "")
-
-    # Tipo de mensagem da Cloud API (text, audio, image, video, sticker, document)
     tipo_mensagem = message.get("type", "")
-
-    # Extrair texto (para text, interactive, button)
     mensagem = _extract_text(message)
-
-    # Extrair media_id (para audio, image, video, sticker, document)
     media_id = _extract_media_id(message)
-
-    # Extrair caption (para image, video)
     caption = _extract_caption(message)
 
     extracted = {
@@ -134,12 +102,5 @@ def extract_data(state: WorkflowState) -> WorkflowState:
         "media_id": media_id,
         "caption": caption,
     }
-
-    logger.info(
-        "Dados extraídos — de=%s, tipo=%s, media_id=%s",
-        extracted["numero_quem_enviou"],
-        extracted["tipo_mensagem"],
-        extracted["media_id"] or "(nenhum)",
-    )
 
     return extracted  # type: ignore[return-value]

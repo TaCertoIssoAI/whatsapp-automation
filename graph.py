@@ -1,15 +1,4 @@
-"""Definição do grafo LangGraph que replica o workflow n8n fake-news-detector.
-
-Adaptado para a WhatsApp Business Cloud API.
-Apenas o caminho de mensagem direta (DM) está ativo.
-O caminho de grupo está comentado (migração apenas para DM).
-
-Fluxo DM (simplificado — pré-processamento feito no message_handler):
-  extract_data → mark_as_read_direct → Switch6 → processamento → resposta
-
-O pré-processamento (registro, termos, debounce, classificação Gemini)
-é feito antes de invocar o grafo, no módulo message_handler.
-"""
+"""Definição do grafo LangGraph do workflow de fact-checking."""
 
 import logging
 

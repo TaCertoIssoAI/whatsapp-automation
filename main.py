@@ -1,23 +1,17 @@
-"""Servidor FastAPI com webhook para a WhatsApp Business Cloud API.
-
-Endpoints:
-- GET  /webhook  → Verificação do webhook (hub.verify_token)
-- POST /webhook  → Receber mensagens e eventos
-- GET  /health   → Health check
-"""
+"""Servidor FastAPI com webhook para a WhatsApp Business Cloud API."""
 
 import hashlib
 import hmac
 import logging
+from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 import config
 from nodes.message_handler import handle_incoming_message
-
-# ──────────────────────── Logging ────────────────────────
+from nodes.whatsapp_api import close_http_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,12 +20,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ──────────────────────── App ────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown: limpa clients compartilhados ao desligar."""
+    logger.info("Bot iniciado na porta %d", config.WEBHOOK_PORT)
+    yield
+    await close_http_client()
+    logger.info("Bot encerrado")
+
 
 app = FastAPI(
-    title="TaCertoIssoAI - Fake News Detector",
-    description="Bot de detecção de fake news para WhatsApp via LangGraph",
-    version="2.0.0",
+    title="TaCertoIssoAI",
+    version="2.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -39,14 +41,9 @@ app = FastAPI(
 
 
 def _verify_signature(payload: bytes, signature_header: str) -> bool:
-    """Valida a assinatura X-Hub-Signature-256 do webhook.
-
-    A Meta assina cada requisição com HMAC-SHA256 usando o App Secret.
-    Se WHATSAPP_APP_SECRET não estiver configurado, pula a validação.
-    """
+    """Valida a assinatura X-Hub-Signature-256."""
     app_secret = config.WHATSAPP_APP_SECRET
     if not app_secret:
-        logger.warning("WHATSAPP_APP_SECRET não configurado — assinatura não validada")
         return True
 
     if not signature_header:
@@ -67,23 +64,9 @@ def _verify_signature(payload: bytes, signature_header: str) -> bool:
 
 
 async def process_message(body: dict) -> None:
-    """Processa a mensagem recebida usando o handler de mensagens."""
+    """Processa a mensagem recebida em background."""
     try:
-        # Extrair informações básicas para log
-        value = (
-            body.get("entry", [{}])[0]
-            .get("changes", [{}])[0]
-            .get("value", {})
-        )
-        messages = value.get("messages", [])
-        sender = messages[0].get("from", "unknown") if messages else "unknown"
-
-        logger.info("Processando mensagem de %s", sender)
-
         await handle_incoming_message(body)
-
-        logger.info("Processamento concluído para %s", sender)
-
     except Exception:
         logger.exception("Erro ao processar mensagem")
 
@@ -92,27 +75,16 @@ async def process_message(body: dict) -> None:
 
 
 @app.get("/webhook", response_model=None)
-async def webhook_verify(
-    request: Request,
-):
-    """Verificação do webhook pela Meta (GET).
-
-    A Meta envia um GET com:
-    - hub.mode = "subscribe"
-    - hub.verify_token = o token que você definiu
-    - hub.challenge = string de desafio para retornar
-
-    Deve retornar o hub.challenge se o token for válido.
-    """
+async def webhook_verify(request: Request):
+    """Verificação do webhook pela Meta (GET)."""
     mode = request.query_params.get("hub.mode", "")
     token = request.query_params.get("hub.verify_token", "")
     challenge = request.query_params.get("hub.challenge", "")
 
     if mode == "subscribe" and token == config.WHATSAPP_VERIFY_TOKEN:
-        logger.info("Webhook verificado com sucesso")
         return PlainTextResponse(content=challenge, status_code=200)
 
-    logger.warning("Falha na verificação do webhook (token inválido)")
+    logger.warning("Falha na verificação do webhook")
     return JSONResponse(content={"error": "Forbidden"}, status_code=403)
 
 
@@ -120,21 +92,15 @@ async def webhook_verify(
 async def webhook_receive(
     request: Request, background_tasks: BackgroundTasks
 ) -> JSONResponse:
-    """Endpoint webhook que recebe mensagens da WhatsApp Cloud API.
-
-    Valida a assinatura X-Hub-Signature-256 e processa a mensagem em background.
-    """
+    """Recebe mensagens da WhatsApp Cloud API e processa em background."""
     payload = await request.body()
 
-    # Validar assinatura
     signature = request.headers.get("X-Hub-Signature-256", "")
     if not _verify_signature(payload, signature):
-        logger.warning("Assinatura inválida no webhook")
         return JSONResponse(content={"error": "Invalid signature"}, status_code=403)
 
     body = await request.json()
 
-    # A Cloud API envia vários tipos de evento; só processamos mensagens
     entries = body.get("entry", [])
     if not entries:
         return JSONResponse(content={"status": "ok"}, status_code=200)
@@ -145,23 +111,8 @@ async def webhook_receive(
             messages = value.get("messages", [])
 
             if not messages:
-                # Pode ser evento de status (delivered, read), ignorar
-                statuses = value.get("statuses", [])
-                if statuses:
-                    logger.debug("Evento de status recebido, ignorando")
                 continue
 
-            message = messages[0]
-            sender = message.get("from", "unknown")
-            msg_type = message.get("type", "unknown")
-
-            logger.info(
-                "Webhook recebido — de=%s, tipo=%s",
-                sender,
-                msg_type,
-            )
-
-            # Processa em background para responder rapidamente ao webhook
             background_tasks.add_task(process_message, body)
 
     return JSONResponse(content={"status": "received"}, status_code=200)
@@ -176,7 +127,6 @@ async def health_check() -> JSONResponse:
 # ──────────────────────── Main ────────────────────────
 
 if __name__ == "__main__":
-    logger.info("Iniciando servidor na porta %d...", config.WEBHOOK_PORT)
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

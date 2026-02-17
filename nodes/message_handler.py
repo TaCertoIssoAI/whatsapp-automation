@@ -1,13 +1,7 @@
 """Handler de pré-processamento de mensagens.
 
-Responsável por:
-1. Registro de usuário e envio de boas-vindas com termos (com debounce de 1s)
-2. Verificação de aceitação dos termos
-3. Comando /delete
-4. Debounce de 1 segundo para agrupar mensagens
-5. Classificação via Gemini (verificar vs conversar)
-6. Histórico de chat de 5 minutos
-7. Envio de erros ao usuário em caso de falha
+Responsável por registro, termos, debounce, classificação Gemini,
+histórico de chat e roteamento para verificação ou conversa.
 """
 
 import asyncio
@@ -22,12 +16,23 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Grafo LangGraph compilado uma vez
 _workflow = None
+
+# Lock por usuário para evitar race conditions em msgs simultâneas do mesmo sender
+_user_locks: dict[str, asyncio.Lock] = {}
+_user_locks_meta_lock = asyncio.Lock()
+
+
+async def _get_user_lock(sender: str) -> asyncio.Lock:
+    """Retorna um asyncio.Lock exclusivo por usuário (lazy, thread-safe)."""
+    if sender not in _user_locks:
+        async with _user_locks_meta_lock:
+            if sender not in _user_locks:
+                _user_locks[sender] = asyncio.Lock()
+    return _user_locks[sender]
 
 
 def _get_workflow():
-    """Retorna o grafo LangGraph (lazy init)."""
     global _workflow
     if _workflow is None:
         _workflow = compile_graph()
@@ -142,17 +147,11 @@ def _extract_message_info(body: dict) -> dict | None:
 
 
 async def handle_incoming_message(body: dict) -> None:
-    """Handler principal que processa mensagens antes do grafo LangGraph.
+    """Handler principal — processa mensagens antes do grafo LangGraph.
 
-    Fluxo:
-    1. Extrair dados da mensagem
-    2. Verificar /delete
-    3. Verificar se é resposta aos botões de termos
-    4. Verificar se usuário está registrado (se não, registrar + boas-vindas)
-    5. Verificar se aceitou os termos
-    6. Debounce de 1s + classificação Gemini
-    7. Se VERIFICAR → grafo LangGraph
-    8. Se CONVERSAR → resposta conversacional via Gemini
+    Usa lock per-user para garantir que a seção crítica de
+    registro/termos não sofra race condition quando o mesmo
+    usuário envia várias mensagens simultâneas.
     """
     info = _extract_message_info(body)
     if not info:
@@ -164,47 +163,39 @@ async def handle_incoming_message(body: dict) -> None:
     msg_id = info["msg_id"]
     button_id = info["button_id"]
 
-    logger.info(
-        "handle_incoming_message — sender=%s, type=%s, button_id=%s",
-        sender, msg_type, button_id,
-    )
+    # Lock por usuário: protege registro/termos contra msgs simultâneas
+    user_lock = await _get_user_lock(sender)
+    async with user_lock:
+        if msg_type == "text" and text.strip().lower() == "/delete":
+            await _handle_delete(sender, msg_id)
+            return
 
-    # ── 1. Comando /delete ──
-    if msg_type == "text" and text.strip().lower() == "/delete":
-        await _handle_delete(sender, msg_id)
-        return
+        if button_id in ("terms_accept", "terms_reject"):
+            await _handle_terms_response(sender, msg_id, button_id, info)
+            return
 
-    # ── 2. Resposta aos botões de termos ──
-    if button_id in ("terms_accept", "terms_reject"):
-        await _handle_terms_response(sender, msg_id, button_id, info)
-        return
+        is_registered = await redis_client.is_user_registered(sender)
+        if not is_registered:
+            await _handle_new_user(sender, msg_id, info)
+            return
 
-    # ── 3. Verificar se está registrado ──
-    is_registered = await redis_client.is_user_registered(sender)
-    if not is_registered:
-        await _handle_new_user(sender, msg_id, info)
-        return
+        terms_status = await redis_client.get_terms_status(sender)
+        if terms_status != "yes":
+            await _handle_terms_not_accepted(sender, msg_id, info)
+            return
 
-    # ── 4. Verificar se aceitou os termos ──
-    terms_status = await redis_client.get_terms_status(sender)
-    if terms_status != "yes":
-        await _handle_terms_not_accepted(sender, msg_id, info)
-        return
+        await whatsapp_api.mark_as_read(msg_id)
 
-    # ── 5. Marcar como lida ──
-    await whatsapp_api.mark_as_read(msg_id)
+        if msg_type == "document":
+            await whatsapp_api.send_text(
+                sender,
+                "Eu não consigo analisar documentos, você pode enviar um texto, "
+                "um áudio, uma imagem ou um vídeo para eu analisar.",
+                quoted_message_id=msg_id,
+            )
+            return
 
-    # ── 6. Documento não suportado ──
-    if msg_type == "document":
-        await whatsapp_api.send_text(
-            sender,
-            "Eu não consigo analisar documentos, você pode enviar um texto, "
-            "um áudio, uma imagem ou um vídeo para eu analisar.",
-            quoted_message_id=msg_id,
-        )
-        return
-
-    # ── 7. Debounce + classificação ──
+    # Debounce e classificação rodam fora do lock (longa duração)
     await _handle_message_with_debounce(sender, info)
 
 
@@ -216,7 +207,6 @@ async def _handle_delete(sender: str, msg_id: str) -> None:
     await whatsapp_api.mark_as_read(msg_id)
     await redis_client.unregister_user(sender)
     await whatsapp_api.send_text(sender, DELETE_CONFIRMATION_MESSAGE)
-    logger.info("Usuário %s removido via /delete", sender)
 
 
 async def _handle_terms_response(
@@ -234,14 +224,8 @@ async def _handle_terms_response(
             "que você quer verificar. 😊",
         )
 
-        # Processar mensagens pendentes usando o fluxo de debounce existente
         pending = await redis_client.get_and_clear_pending_messages(sender)
         if pending:
-            logger.info(
-                "Usuário %s aceitou termos — processando %d mensagem(ns) pendente(s)",
-                sender, len(pending),
-            )
-            # Salvar histórico de chat para as mensagens pendentes
             for msg in pending:
                 if msg.get("msg_type") == "text" and msg.get("text"):
                     await redis_client.add_chat_message(sender, "user", msg["text"])
@@ -259,8 +243,6 @@ async def _handle_terms_response(
             except Exception:
                 logger.exception("Erro ao processar pendentes para %s", sender)
                 await whatsapp_api.send_text(sender, ERROR_MESSAGE)
-
-        logger.info("Usuário %s aceitou os termos", sender)
     else:
         await redis_client.set_terms_status(sender, False)
         await whatsapp_api.send_text(
@@ -269,102 +251,57 @@ async def _handle_terms_response(
             "não podemos processar suas solicitações.\n\n"
             "Se mudar de ideia, é só enviar uma mensagem! 😊",
         )
-        logger.info("Usuário %s recusou os termos", sender)
 
 
 async def _handle_new_user(sender: str, msg_id: str, info: dict) -> None:
-    """Processa primeiro contato de um novo usuário.
-
-    Registra o usuário, salva a mensagem como pendente e aplica
-    debounce de 1s antes de enviar boas-vindas (para que múltiplas
-    mensagens rápidas não gerem múltiplas boas-vindas).
-    """
+    """Registra novo usuário atomicamente e envia boas-vindas com debounce."""
     await whatsapp_api.mark_as_read(msg_id)
 
-    # Registrar o usuário (para que mensagens seguintes entrem no fluxo correto)
-    await redis_client.register_user(sender)
+    # Registrar + definir termos="no" atomicamente (pipeline)
+    await redis_client.register_user_with_terms(sender)
 
-    # Definir termos como "pending" para que próximas mensagens durante
-    # o debounce entrem em _handle_terms_not_accepted (e não aqui de novo)
-    await redis_client.set_terms_status(sender, False)
-
-    # Salvar a mensagem para processar depois da aceitação dos termos
     await _save_pending_message(sender, info)
 
-    # Debounce de 1s antes de enviar boas-vindas
     lock_id = str(uuid.uuid4())
     await redis_client.set_debounce_lock(sender, lock_id)
     await asyncio.sleep(config.MESSAGE_DEBOUNCE_SECONDS)
 
     current_lock = await redis_client.get_debounce_lock(sender)
     if current_lock != lock_id:
-        # Outra mensagem chegou durante o debounce.
-        # O debounce de _handle_terms_not_accepted vai enviar o pedido de termos.
-        logger.info(
-            "Debounce welcome — nova mensagem para %s, delegando ao handler de termos",
-            sender,
-        )
         return
 
     await redis_client.clear_debounce_lock(sender)
-
-    # Enviar mensagem de boas-vindas com botões
     await whatsapp_api.send_interactive_buttons(
-        sender,
-        WELCOME_MESSAGE,
-        TERMS_BUTTONS,
+        sender, WELCOME_MESSAGE, TERMS_BUTTONS,
     )
-
-    logger.info("Novo usuário %s — boas-vindas enviadas", sender)
 
 
 async def _handle_terms_not_accepted(
     sender: str, msg_id: str, info: dict
 ) -> None:
-    """Processa mensagem de usuário que não aceitou os termos.
-
-    Aplica debounce de 1s para evitar spam de botões se o usuário enviar
-    múltiplas mensagens em sequência.
-    """
+    """Salva mensagem como pendente e reenvia botões de termos com debounce."""
     await whatsapp_api.mark_as_read(msg_id)
-
-    # Salvar a mensagem para processar depois da aceitação
     await _save_pending_message(sender, info)
 
-    # Debounce de 1s para evitar enviar múltiplos pedidos de termos
     lock_id = str(uuid.uuid4())
     await redis_client.set_debounce_lock(sender, lock_id)
     await asyncio.sleep(config.MESSAGE_DEBOUNCE_SECONDS)
 
     current_lock = await redis_client.get_debounce_lock(sender)
     if current_lock != lock_id:
-        logger.info(
-            "Debounce termos — nova mensagem para %s, cancelando envio de pedido de termos",
-            sender,
-        )
         return
 
     await redis_client.clear_debounce_lock(sender)
-
-    # Enviar mensagem pedindo aceitação dos termos com botões
     await whatsapp_api.send_interactive_buttons(
-        sender,
-        TERMS_REQUIRED_MESSAGE,
-        TERMS_BUTTONS,
+        sender, TERMS_REQUIRED_MESSAGE, TERMS_BUTTONS,
     )
-
-    logger.info("Usuário %s não aceitou termos — pedindo aceitação", sender)
 
 
 # ──────────────────────── Debounce e classificação ────────────────────────
 
 
 async def _save_pending_message(sender: str, info: dict) -> None:
-    """Salva uma mensagem na lista pendente do Redis.
-
-    Para mídia, salva apenas as informações necessárias para recuperar depois
-    (media_id, tipo), não o conteúdo binário.
-    """
+    """Salva metadados da mensagem na lista pendente do Redis."""
     msg_data = {
         "msg_type": info["msg_type"],
         "text": info["text"],
@@ -378,19 +315,9 @@ async def _save_pending_message(sender: str, info: dict) -> None:
 
 
 async def _handle_message_with_debounce(sender: str, info: dict) -> None:
-    """Processa mensagem com debounce de 1 segundo.
-
-    Fluxo:
-    1. Salvar mensagem na lista pendente
-    2. Criar lock de debounce com ID único
-    3. Esperar 1 segundo
-    4. Se o lock ainda for o mesmo → processar todas as mensagens pendentes
-    5. Se o lock mudou → outra mensagem chegou, esta task fica inativa
-    """
-    # Salvar mensagem na lista pendente
+    """Salva mensagem, aplica debounce de 1s e processa o batch acumulado."""
     await _save_pending_message(sender, info)
 
-    # Salvar no histórico de chat (para contexto conversacional)
     if info["msg_type"] == "text" and info["text"]:
         await redis_client.add_chat_message(sender, "user", info["text"])
     elif info.get("caption"):
@@ -398,29 +325,18 @@ async def _handle_message_with_debounce(sender: str, info: dict) -> None:
     elif info["msg_type"] in ("audio", "image", "video", "sticker"):
         await redis_client.add_chat_message(sender, "user", f"[{info['msg_type']}]")
 
-    # Criar lock de debounce
     lock_id = str(uuid.uuid4())
     await redis_client.set_debounce_lock(sender, lock_id)
-
-    # Esperar o tempo de debounce
     await asyncio.sleep(config.MESSAGE_DEBOUNCE_SECONDS)
 
-    # Verificar se o lock ainda é o mesmo (nenhuma nova mensagem chegou)
     current_lock = await redis_client.get_debounce_lock(sender)
     if current_lock != lock_id:
-        logger.info(
-            "Debounce — nova mensagem detectada para %s, cancelando processamento",
-            sender,
-        )
         return
 
-    # Limpar o lock
     await redis_client.clear_debounce_lock(sender)
 
-    # Buscar todas as mensagens pendentes e limpar atomicamente
     pending = await redis_client.get_and_clear_pending_messages(sender)
     if not pending:
-        logger.warning("Nenhuma mensagem pendente após debounce para %s", sender)
         return
 
     await _process_with_classification(sender, pending)
@@ -429,41 +345,28 @@ async def _handle_message_with_debounce(sender: str, info: dict) -> None:
 async def _process_with_classification(sender: str, pending: list[dict]) -> None:
     """Classifica e processa mensagens pendentes.
 
-    Se alguma mensagem é de mídia (imagem, vídeo, áudio, sticker),
-    sempre envia para verificação sem chamar o Gemini para classificar.
-
-    Caso contrário, usa o Gemini para classificar se é para verificar ou conversar.
-    Antes de processar o resultado, verifica se novas mensagens chegaram.
-
-    Nota: as mensagens pendentes já foram removidas do Redis antes desta chamada.
-    Se novas mensagens chegarem, elas serão adicionadas à lista pendente pelo
-    debounce handler da nova mensagem.
+    Mídia → verificação direta. Texto → classificação Gemini.
+    Verifica interrupções (novas msgs) antes de processar.
     """
-    # Verificar se há mídia — se sim, sempre verificar
     has_media = any(
         msg.get("msg_type") in ("audio", "image", "video", "sticker")
         for msg in pending
     )
 
     if has_media:
-        logger.info("Mídia detectada para %s — enviando para verificação", sender)
         try:
             await _run_verification(sender, pending)
         except Exception:
-            logger.exception("Erro na verificação de mídia para %s", sender)
+            logger.exception("Erro na verificação para %s", sender)
             await whatsapp_api.send_text(sender, ERROR_MESSAGE)
         return
 
-    # Só mensagens de texto — classificar com Gemini
     text_messages = [
         msg.get("text", "") for msg in pending if msg.get("text")
     ]
-
     if not text_messages:
-        logger.warning("Nenhuma mensagem de texto para classificar para %s", sender)
         return
 
-    # Enviar indicador de digitação contínuo durante classificação
     last_msg_id = pending[-1].get("msg_id", "")
     typing_task = None
     if last_msg_id:
@@ -472,38 +375,21 @@ async def _process_with_classification(sender: str, pending: list[dict]) -> None
     try:
         classification = await ai_services.classify_message(text_messages)
 
-        # Verificar se novas mensagens chegaram durante a classificação
         new_pending_count = await redis_client.get_pending_message_count(sender)
         if new_pending_count > 0:
+            if typing_task:
+                typing_task.cancel()
             if classification == "VERIFICAR":
-                logger.info(
-                    "Novas mensagens durante classificação para %s, "
-                    "mas classificação é VERIFICAR — processando mesmo assim",
-                    sender,
-                )
-                if typing_task:
-                    typing_task.cancel()
                 await _run_verification(sender, pending)
-            else:
-                logger.info(
-                    "Novas mensagens durante classificação para %s — "
-                    "abandonando resposta conversacional (novo debounce vai tratar)",
-                    sender,
-                )
-                if typing_task:
-                    typing_task.cancel()
             return
 
         if classification == "VERIFICAR":
-            logger.info("Classificação VERIFICAR para %s", sender)
             if typing_task:
                 typing_task.cancel()
             await _run_verification(sender, pending)
         else:
-            logger.info("Classificação CONVERSAR para %s", sender)
-            # Manter typing_task ativo durante a geração da resposta
             await _run_conversation(sender, text_messages, last_msg_id, typing_task)
-            typing_task = None  # Já foi cancelado dentro de _run_conversation
+            typing_task = None
     except Exception:
         logger.exception("Erro no processamento para %s", sender)
         if typing_task:
@@ -512,12 +398,7 @@ async def _process_with_classification(sender: str, pending: list[dict]) -> None
 
 
 async def _run_verification(sender: str, pending: list[dict]) -> None:
-    """Executa o fluxo de verificação via grafo LangGraph.
-
-    Usa o raw_body da última mensagem de mídia, ou da última mensagem de texto.
-    """
-    # Encontrar a mensagem mais adequada para verificação
-    # Prioridade: mídia > texto
+    """Executa verificação via grafo LangGraph (prioridade: mídia > texto)."""
     target_msg = None
     for msg in reversed(pending):
         if msg.get("msg_type") in ("audio", "image", "video", "sticker"):
@@ -525,25 +406,17 @@ async def _run_verification(sender: str, pending: list[dict]) -> None:
             break
 
     if target_msg is None:
-        # Sem mídia — usar a última mensagem de texto,
-        # mas combinar todos os textos em uma única mensagem
         combined_text = " ".join(
             msg.get("text", "") for msg in pending if msg.get("text")
         )
-        # Usar o raw_body da última mensagem mas com texto combinado
         target_msg = pending[-1]
-        # Modificar o raw_body para incluir o texto combinado
         raw_body = target_msg.get("raw_body", {})
         if raw_body:
-            # Deep copy para não modificar o original
             raw_body = copy.deepcopy(raw_body)
             try:
                 msg_obj = raw_body["entry"][0]["changes"][0]["value"]["messages"][0]
                 if msg_obj.get("type") == "text":
                     msg_obj["text"]["body"] = combined_text
-                elif msg_obj.get("type") == "interactive":
-                    # Para interactive, manter o original
-                    pass
             except (KeyError, IndexError):
                 pass
             target_msg = {**target_msg, "raw_body": raw_body}
@@ -555,18 +428,14 @@ async def _run_verification(sender: str, pending: list[dict]) -> None:
 
     try:
         workflow = _get_workflow()
-        initial_state = {
+        result = await workflow.ainvoke({
             "raw_body": raw_body,
             "endpoint_api": config.FACT_CHECK_API_URL,
-        }
-        result = await workflow.ainvoke(initial_state)
+        })
 
-        # Salvar resposta do bot no histórico de chat
         rationale = result.get("rationale", "")
         if rationale:
             await redis_client.add_chat_message(sender, "bot", rationale)
-
-        logger.info("Verificação concluída para %s", sender)
     except Exception:
         logger.exception("Erro na verificação para %s", sender)
         await whatsapp_api.send_text(sender, ERROR_MESSAGE)
@@ -578,41 +447,26 @@ async def _run_conversation(
     last_msg_id: str,
     typing_task: asyncio.Task | None = None,
 ) -> None:
-    """Gera e envia uma resposta conversacional via Gemini."""
+    """Gera e envia resposta conversacional via Gemini."""
     try:
-        # Buscar histórico de chat dos últimos 5 minutos
         chat_history = await redis_client.get_chat_history(sender)
-
-        # Gerar resposta
         response = await ai_services.generate_chat_response(text_messages, chat_history)
 
-        # Verificar se novas mensagens chegaram durante a geração da resposta
         new_pending_count = await redis_client.get_pending_message_count(sender)
         if new_pending_count > 0:
-            logger.info(
-                "Novas mensagens chegaram durante resposta conversacional para %s — "
-                "abandonando resposta",
-                sender,
-            )
             if typing_task:
                 typing_task.cancel()
             return
 
-        # Cancelar typing antes de enviar resposta
         if typing_task:
             typing_task.cancel()
 
-        # Enviar resposta
         await whatsapp_api.send_text(
             sender,
             response,
             quoted_message_id=last_msg_id if last_msg_id else None,
         )
-
-        # Salvar resposta do bot no histórico de chat
         await redis_client.add_chat_message(sender, "bot", response)
-
-        logger.info("Resposta conversacional enviada para %s", sender)
     except Exception:
         logger.exception("Erro na resposta conversacional para %s", sender)
         if typing_task:

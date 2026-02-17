@@ -40,8 +40,8 @@ services:
       - GEMINI_VIDEO_MODEL=${GEMINI_VIDEO_MODEL:-gemini-3-flash-preview}
       - GEMINI_TTS_MODEL=${GEMINI_TTS_MODEL:-gemini-2.5-flash-preview-tts}
       - GEMINI_TTS_VOICE=${GEMINI_TTS_VOICE:-Kore}
-      - GEMINI_CLASSIFIER_MODEL=${GEMINI_CLASSIFIER_MODEL:-gemini-3-flash-preview}
-      - GEMINI_CHAT_MODEL=${GEMINI_CHAT_MODEL:-gemini-3-flash-preview}
+      - GEMINI_CLASSIFIER_MODEL=${GEMINI_CLASSIFIER_MODEL:-gemini-2.5-flash-lite}
+      - GEMINI_CHAT_MODEL=${GEMINI_CHAT_MODEL:-gemini-2.5-flash-lite}
       
       # Google Cloud Vision API
       - GOOGLE_CLOUD_API_KEY=${GOOGLE_CLOUD_API_KEY}
