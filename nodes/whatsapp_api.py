@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 _MAX_TEXT_LENGTH = 4096  # Limite da WhatsApp Cloud API
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [1, 2, 4]  # segundos
 
 
 def _messages_url() -> str:
@@ -32,11 +34,7 @@ def _headers() -> dict[str, str]:
 
 
 def _split_text(text: str, max_len: int = _MAX_TEXT_LENGTH) -> list[str]:
-    """Divide texto em pedaços respeitando o limite de caracteres.
-
-    Tenta quebrar em parágrafos (\n\n), depois em linhas (\n),
-    depois em espaços, e por último corta no limite.
-    """
+    """Divide texto em pedaços respeitando o limite de caracteres."""
     if len(text) <= max_len:
         return [text]
 
@@ -48,22 +46,71 @@ def _split_text(text: str, max_len: int = _MAX_TEXT_LENGTH) -> list[str]:
             chunks.append(remaining)
             break
 
-        # Tentar quebrar em parágrafo
         cut_at = remaining.rfind("\n\n", 0, max_len)
         if cut_at == -1:
-            # Tentar quebrar em linha
             cut_at = remaining.rfind("\n", 0, max_len)
         if cut_at == -1:
-            # Tentar quebrar em espaço
             cut_at = remaining.rfind(" ", 0, max_len)
         if cut_at == -1:
-            # Cortar no limite
             cut_at = max_len
 
         chunks.append(remaining[:cut_at].rstrip())
         remaining = remaining[cut_at:].lstrip()
 
     return chunks
+
+
+async def _request_with_retry(
+    method: str,
+    url: str,
+    client: httpx.AsyncClient,
+    **kwargs,
+) -> httpx.Response:
+    """Executa request HTTP com retry para erros transientes."""
+    last_exc: Exception | None = None
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            if method == "GET":
+                resp = await client.get(url, **kwargs)
+            else:
+                resp = await client.post(url, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except httpx.HTTPStatusError as e:
+            last_exc = e
+            status = e.response.status_code
+            # Retry apenas em erros transientes (429 rate limit, 5xx server error)
+            # NÃO fazer retry em 4xx (400 Bad Request, 401 Unauthorized, etc.)
+            if status in (429, 500, 502, 503, 504) and attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_DELAYS[attempt]
+                logger.warning(
+                    "WhatsApp API %d em %s, retry %d/%d em %ds",
+                    status, url, attempt + 1, _MAX_RETRIES, delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                # Para 4xx, logar o body da resposta para debug
+                if 400 <= status < 500:
+                    try:
+                        error_body = e.response.text[:500]
+                    except Exception:
+                        error_body = "N/A"
+                    logger.error(
+                        "WhatsApp API erro %d em %s: %s",
+                        status, url, error_body,
+                    )
+                raise
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.ConnectTimeout) as e:
+            last_exc = e
+            if attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_DELAYS[attempt]
+                logger.warning("WhatsApp API timeout/conexão em %s, retry %d/%d em %ds", url, attempt + 1, _MAX_RETRIES, delay)
+                await asyncio.sleep(delay)
+            else:
+                raise
+
+    raise last_exc  # type: ignore[misc]
 
 
 # ── Enviar Texto ──
@@ -86,12 +133,10 @@ async def send_text(
                 "type": "text",
                 "text": {"body": chunk},
             }
-            # Só cita a mensagem original no primeiro chunk
             if quoted_message_id and i == 0:
                 body["context"] = {"message_id": quoted_message_id}
 
-            resp = await client.post(_messages_url(), json=body, headers=_headers())
-            resp.raise_for_status()
+            resp = await _request_with_retry("POST", _messages_url(), client, json=body, headers=_headers())
             last_result = resp.json()
 
     return last_result
@@ -110,8 +155,7 @@ async def upload_media(
     data = {"messaging_product": "whatsapp", "type": mime_type}
 
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(url, headers=headers, files=files, data=data)
-        resp.raise_for_status()
+        resp = await _request_with_retry("POST", url, client, headers=headers, files=files, data=data)
         return resp.json().get("id", "")
 
 
@@ -129,8 +173,7 @@ async def send_audio(remote_jid: str, audio_bytes: bytes) -> dict:
         "audio": {"id": media_id},
     }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(_messages_url(), json=body, headers=_headers())
-        resp.raise_for_status()
+        resp = await _request_with_retry("POST", _messages_url(), client, json=body, headers=_headers())
         return resp.json()
 
 
@@ -144,8 +187,7 @@ async def mark_as_read(message_id: str) -> None:
     }
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(_messages_url(), json=body, headers=_headers())
-            resp.raise_for_status()
+            await _request_with_retry("POST", _messages_url(), client, json=body, headers=_headers())
     except Exception:
         logger.warning("Falha ao marcar mensagem como lida: %s", message_id)
 
@@ -156,15 +198,13 @@ async def download_media(media_id: str) -> bytes:
     auth_header = {"Authorization": f"Bearer {config.WHATSAPP_ACCESS_TOKEN}"}
 
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.get(_media_url(media_id), headers=auth_header)
-        resp.raise_for_status()
+        resp = await _request_with_retry("GET", _media_url(media_id), client, headers=auth_header)
         download_url = resp.json().get("url", "")
 
         if not download_url:
             raise ValueError(f"URL de download não encontrada para media_id={media_id}")
 
-        resp = await client.get(download_url, headers=auth_header)
-        resp.raise_for_status()
+        resp = await _request_with_retry("GET", download_url, client, headers=auth_header)
         return resp.content
 
 
@@ -176,18 +216,19 @@ async def download_media_as_base64(media_id: str) -> str:
 # ── Indicador de Digitação ──
 
 async def send_typing_indicator(message_id: str) -> None:
+    """Envia indicador de digitação (best-effort, erros são ignorados)."""
     body = {
         "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": "",  # Preenchido pelo Meta quando usa message_id
         "status": "read",
         "message_id": message_id,
-        "typing_indicator": {"type": "text"},
     }
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(_messages_url(), json=body, headers=_headers())
-            resp.raise_for_status()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+            await client.post(_messages_url(), json=body, headers=_headers())
     except Exception:
-        pass  # Indicador não é crítico
+        pass  # Typing indicator é best-effort
 
 
 def send_typing_fire_and_forget(message_id: str) -> None:

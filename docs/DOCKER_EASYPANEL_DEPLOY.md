@@ -1,3 +1,6 @@
+docker login
+./dockerhub.sh
+
 # 🚀 Deploy do WhatsApp Integration Bot no EasyPanel com Docker
 
 Este guia completo explica como containerizar a aplicação e fazer deploy no EasyPanel para manter o bot rodando 24/7.

@@ -1,11 +1,4 @@
-"""Serviços de inteligência artificial — 100% Google Gemini.
-
-- Gemini (transcrição de áudio)
-- Gemini TTS (text-to-speech)
-- Gemini (análise de imagem — sub-workflow analyze-image)
-- Gemini (análise de vídeo)
-- Google Cloud Vision API (reverse image search — sub-workflow reverse-search)
-"""
+"""Serviços de inteligência artificial — Google Gemini + Cloud Vision."""
 
 import asyncio
 import base64
@@ -19,6 +12,34 @@ import httpx
 import config
 
 logger = logging.getLogger(__name__)
+
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [2, 4, 8]
+
+
+async def _retry_async(func, *args, label: str = ""):
+    """Executa função async com retry e backoff para erros transientes."""
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            return await func(*args)
+        except Exception as e:
+            last_exc = e
+            error_str = str(e).lower()
+            is_transient = any(kw in error_str for kw in [
+                "500", "503", "429", "overloaded", "resource_exhausted",
+                "deadline", "timeout", "unavailable", "rate",
+            ])
+            if is_transient and attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_DELAYS[attempt]
+                logger.warning(
+                    "%s falhou (tentativa %d/%d), retry em %ds: %s",
+                    label, attempt + 1, _MAX_RETRIES, delay, e,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
+    raise last_exc  # type: ignore[misc]
 
 
 # ──────────────────────── Gemini Client (lazy) ────────────────────────
@@ -42,30 +63,25 @@ TRANSCRIPTION_PROMPT = (
 
 
 async def transcribe_audio(audio_base64: str) -> str:
-    """Transcreve áudio usando Google Gemini.
-
-    Recebe o áudio em base64, envia inline para o Gemini e retorna a transcrição.
-    Equivalente ao nó 'Transcribe a recording2' do n8n.
-    """
+    """Transcreve áudio usando Google Gemini com retry."""
     from google.genai import types
 
     client = _get_gemini_client()
     audio_bytes = base64.b64decode(audio_base64)
 
-    # Rodar chamada síncrona do Gemini SDK em thread separada
-    # para não bloquear o event loop do asyncio
-    def _call():
-        return client.models.generate_content(
-            model=config.GEMINI_TRANSCRIPTION_MODEL,
-            contents=[
-                types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp3"),
-                TRANSCRIPTION_PROMPT,
-            ],
-        )
+    async def _do():
+        def _call():
+            return client.models.generate_content(
+                model=config.GEMINI_TRANSCRIPTION_MODEL,
+                contents=[
+                    types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp3"),
+                    TRANSCRIPTION_PROMPT,
+                ],
+            )
+        response = await asyncio.to_thread(_call)
+        return response.text or ""
 
-    response = await asyncio.to_thread(_call)
-
-    return response.text or ""
+    return await _retry_async(_do, label="transcribe_audio")
 
 
 # ──────────────────────── Gemini — TTS ────────────────────────
@@ -91,39 +107,33 @@ def _pcm_to_ogg_opus(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
 
 
 async def generate_tts(text: str) -> bytes:
-    """Gera áudio via Gemini TTS.
-
-    Retorna os bytes do áudio em OGG/Opus (compatível com WhatsApp Cloud API).
-    """
+    """Gera áudio via Gemini TTS com retry."""
     from google.genai import types
 
     client = _get_gemini_client()
 
-    # Rodar chamada síncrona do Gemini SDK em thread separada
-    def _call():
-        return client.models.generate_content(
-            model=config.GEMINI_TTS_MODEL,
-            contents=text,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=config.GEMINI_TTS_VOICE,
+    async def _do():
+        def _call():
+            return client.models.generate_content(
+                model=config.GEMINI_TTS_MODEL,
+                contents=text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=config.GEMINI_TTS_VOICE,
+                            )
                         )
-                    )
+                    ),
                 ),
-            ),
-        )
+            )
+        response = await asyncio.to_thread(_call)
+        audio_data = response.candidates[0].content.parts[0].inline_data.data
+        ogg_bytes = await asyncio.to_thread(_pcm_to_ogg_opus, audio_data)
+        return ogg_bytes
 
-    response = await asyncio.to_thread(_call)
-
-    audio_data = response.candidates[0].content.parts[0].inline_data.data
-
-    # Converter PCM bruto → OGG/Opus para compatibilidade com WhatsApp Cloud API
-    ogg_bytes = await asyncio.to_thread(_pcm_to_ogg_opus, audio_data)
-
-    return ogg_bytes
+    return await _retry_async(_do, label="generate_tts")
 
 
 # ──────────────────────── Google Gemini — Análise de Vídeo ────────────────────────
@@ -145,13 +155,8 @@ Descrição completa do vídeo:
 
 
 async def analyze_video(video_base64: str) -> str:
-    """Analisa vídeo usando Google Gemini.
-
-    Recebe o vídeo em base64, envia para o Gemini e retorna a descrição.
-    Equivalente ao nó 'Analyze video2' do n8n.
-    """
+    """Analisa vídeo usando Google Gemini com retry."""
     client = _get_gemini_client()
-
     video_bytes = base64.b64decode(video_base64)
 
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
@@ -159,38 +164,30 @@ async def analyze_video(video_base64: str) -> str:
         tmp_path = Path(tmp.name)
 
     try:
-        # Upload síncrono em thread separada para não bloquear o event loop
         uploaded_file = await asyncio.to_thread(client.files.upload, file=tmp_path)
 
-        # Aguardar até o arquivo ficar ACTIVE (processamento do Gemini)
-        max_wait = 60  # segundos
-        poll_interval = 2  # segundos
+        max_wait = 60
+        poll_interval = 2
         waited = 0
         while uploaded_file.state and uploaded_file.state.name != "ACTIVE":
             if uploaded_file.state.name == "FAILED":
-                raise RuntimeError(
-                    f"Upload do vídeo falhou: {uploaded_file.state.name}"
-                )
+                raise RuntimeError(f"Upload do vídeo falhou: {uploaded_file.state.name}")
             if waited >= max_wait:
-                raise RuntimeError(
-                    f"Timeout aguardando processamento do vídeo "
-                    f"(estado: {uploaded_file.state.name})"
-                )
+                raise RuntimeError(f"Timeout aguardando processamento do vídeo (estado: {uploaded_file.state.name})")
             await asyncio.sleep(poll_interval)
             waited += poll_interval
-            uploaded_file = await asyncio.to_thread(
-                client.files.get, name=uploaded_file.name
-            )
+            uploaded_file = await asyncio.to_thread(client.files.get, name=uploaded_file.name)
 
-        # Chamada síncrona em thread separada
-        def _generate():
-            return client.models.generate_content(
-                model=config.GEMINI_VIDEO_MODEL,
-                contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
-            )
+        async def _do():
+            def _generate():
+                return client.models.generate_content(
+                    model=config.GEMINI_VIDEO_MODEL,
+                    contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
+                )
+            response = await asyncio.to_thread(_generate)
+            return response.text or ""
 
-        response = await asyncio.to_thread(_generate)
-        return response.text or ""
+        return await _retry_async(_do, label="analyze_video")
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -228,30 +225,25 @@ IMAGE_ANALYSIS_PROMPT = (
 
 
 async def analyze_image_content(image_base64: str) -> str:
-    """Analisa imagem usando Google Gemini.
-
-    Equivalente ao sub-workflow 'analyze-image' do n8n.
-    Usa o mesmo prompt exato do n8n.
-    """
+    """Analisa imagem usando Google Gemini com retry."""
     from google.genai import types
 
     client = _get_gemini_client()
-
     image_bytes = base64.b64decode(image_base64)
 
-    # Rodar chamada síncrona do Gemini SDK em thread separada
-    def _call():
-        return client.models.generate_content(
-            model=config.GEMINI_IMAGE_MODEL,
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                IMAGE_ANALYSIS_PROMPT,
-            ],
-        )
+    async def _do():
+        def _call():
+            return client.models.generate_content(
+                model=config.GEMINI_IMAGE_MODEL,
+                contents=[
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                    IMAGE_ANALYSIS_PROMPT,
+                ],
+            )
+        response = await asyncio.to_thread(_call)
+        return response.text or ""
 
-    response = await asyncio.to_thread(_call)
-
-    return response.text or ""
+    return await _retry_async(_do, label="analyze_image")
 
 
 # ──────────────────────── Google Cloud Vision — Reverse Image Search ──────

@@ -46,11 +46,13 @@ def check_is_on_group(state: WorkflowState) -> WorkflowState:
     """Verifica se a mensagem veio de um grupo.
 
     Na Cloud API, apenas mensagens DM são recebidas no webhook por padrão.
-    Grupos não são suportados diretamente. Mantemos a verificação por
-    compatibilidade, mas sempre retornará False no fluxo DM.
+    Também interrompe o fluxo se não houver remetente (payload sem mensagem válida).
     """
-    # Na Cloud API, o número de quem enviou é simplesmente o telefone (ex: '5511999999999')
-    # Não há sufixo @g.us como na Evolution API
+    # Se não tem remetente, marca como grupo para interromper fluxo no route
+    sender = state.get("numero_quem_enviou", "")
+    if not sender:
+        return {"is_group": True}  # type: ignore[return-value]
+
     is_group = False
     return {"is_group": is_group}  # type: ignore[return-value]
 

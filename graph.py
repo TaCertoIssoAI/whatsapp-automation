@@ -165,12 +165,14 @@ def build_graph() -> StateGraph:
 def _route_after_rationale(state: WorkflowState) -> str:
     """Após enviar o rationale, verifica se deve gerar áudio.
 
-    O áudio é gerado apenas quando a mensagem original era de áudio.
-    Tipos da Cloud API: 'audio' (em vez de 'audioMessage' da Evolution API).
+    O áudio é gerado apenas quando:
+    1. A mensagem original era de áudio
+    2. Existe rationale para converter em áudio
     """
     tipo = state.get("tipo_mensagem", "")
+    rationale = state.get("rationale", "")
 
-    if tipo == "audio":
+    if tipo == "audio" and rationale:
         return "send_audio_response"
     return "__end__"
 

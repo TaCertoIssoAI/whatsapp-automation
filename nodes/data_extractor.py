@@ -101,7 +101,18 @@ def extract_data(state: WorkflowState) -> WorkflowState:
 
     if not message:
         logger.warning("Nenhuma mensagem encontrada no payload")
-        return {}  # type: ignore[return-value]
+        # Retorna state mínimo válido com flag para interromper o fluxo
+        return {
+            "endpoint_api": state.get("endpoint_api", ""),
+            "numero_quem_enviou": "",
+            "nome_quem_enviou": "",
+            "mensagem": "",
+            "id_mensagem": "",
+            "stanza_id": "",
+            "tipo_mensagem": "",
+            "media_id": "",
+            "caption": "",
+        }  # type: ignore[return-value]
 
     # Contexto de citação (reply)
     context = message.get("context", {})

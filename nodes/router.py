@@ -1,13 +1,17 @@
 """Roteamento por tipo de mensagem."""
 
+import logging
+
 from state import WorkflowState
+
+logger = logging.getLogger(__name__)
 
 
 def route_direct_message(state: WorkflowState) -> str:
     """Switch6: Roteia mensagens diretas pelo tipo de mensagem.
 
-    Tipos da Cloud API: audio, text, image, sticker, video, document.
-    Sticker é tratado como imagem.
+    Tipos da Cloud API: audio, text, image, sticker, video, document,
+    interactive, button, reaction, location, contacts, order, system.
     """
     tipo = state.get("tipo_mensagem", "")
 
@@ -22,4 +26,9 @@ def route_direct_message(state: WorkflowState) -> str:
         "button": "process_text",
     }
 
-    return mapping.get(tipo, "handle_document_unsupported")
+    route = mapping.get(tipo)
+    if not route:
+        logger.info("Tipo de mensagem não suportado: '%s'", tipo)
+        route = "handle_document_unsupported"
+
+    return route

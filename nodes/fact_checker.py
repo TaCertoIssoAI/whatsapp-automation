@@ -37,7 +37,7 @@ async def _post_with_retry(url: str, payload: dict) -> dict:
                 await asyncio.sleep(delay)
             else:
                 raise
-        except (httpx.ConnectError, httpx.ReadTimeout) as e:
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.ConnectTimeout) as e:
             last_exc = e
             if attempt < _MAX_RETRIES - 1:
                 delay = _RETRY_DELAYS[attempt]
