@@ -80,6 +80,7 @@ async def process_message(body: dict) -> None:
 # ──────────────────────── Endpoints ────────────────────────
 
 
+@app.post("/")
 @app.post("/messages-upsert")
 @app.post("/messages-upsert/messages-upsert")
 async def webhook_messages_upsert(
@@ -89,8 +90,19 @@ async def webhook_messages_upsert(
 
     Equivalente ao nó 'Mensagem recebida' do n8n (POST /messages-upsert).
     Processa a mensagem em background para não bloquear a resposta ao webhook.
+    
+    Aceita requests em:
+    - POST / (quando Webhook by Events está desativado)
+    - POST /messages-upsert (quando Webhook by Events está ativado)
+    - POST /messages-upsert/messages-upsert (fallback)
     """
     body = await request.json()
+    
+    # Log completo da requisição
+    logger.info("=== WEBHOOK RECEBIDO ===")
+    logger.info("Path: %s", request.url.path)
+    logger.info("Headers: %s", dict(request.headers))
+    logger.info("Body: %s", body)
 
     logger.info(
         "Webhook recebido — instância=%s, evento=%s",

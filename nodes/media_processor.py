@@ -2,7 +2,7 @@
 
 Cada função de processamento é um nó do LangGraph que:
 1. Envia mensagem de status ("Estou analisando...")
-2. Obtém a mídia em base64
+2. Obtém a mídia (via Meta Graph API — Cloud API) ou base64 (Baileys)
 3. Processa a mídia (transcrição/análise)
 4. Chama a API de fact-checking
 5. Retorna o rationale
@@ -10,11 +10,16 @@ Cada função de processamento é um nó do LangGraph que:
 Cobre ambos os caminhos do n8n:
 - Mensagens diretas (Switch6)
 - Mensagens citadas em grupos (Switch9)
+
+Nota Cloud API: a mídia vem com um media_id no payload do webhook.
+O download é feito em 2 etapas via Meta Graph API com Bearer token.
 """
 
 import base64
 import logging
 import struct
+
+import httpx
 
 from nodes import ai_services, evolution_api, fact_checker
 from nodes.data_extractor import get_context_info
@@ -22,8 +27,108 @@ from state import WorkflowState
 
 logger = logging.getLogger(__name__)
 
+_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+
 
 # ──────────────────────── Utilitários ────────────────────────
+
+
+def _is_send_error(result: dict) -> bool:
+    """Verifica se o resultado de um send_text/send_audio indica erro."""
+    if not isinstance(result, dict):
+        return False
+    return result.get("status") == "error"
+
+
+async def _safe_send_status(
+    instancia: str,
+    remote_jid: str,
+    text: str,
+    chave_api: str | None,
+) -> bool:
+    """Envia mensagem de status com tratamento de erro.
+    
+    Retorna True se enviou com sucesso, False se falhou.
+    """
+    try:
+        result = await evolution_api.send_text(
+            instancia, remote_jid, text, api_key=chave_api
+        )
+        if _is_send_error(result):
+            logger.error(
+                "Falha ao enviar mensagem de status: %s", 
+                result.get("error", "unknown")
+            )
+            return False
+        return True
+    except Exception as e:
+        logger.error("Exceção ao enviar mensagem de status: %s", e)
+        return False
+
+
+async def _download_media_from_meta(media_id: str) -> str:
+    """Baixa mídia via Meta Graph API (2 etapas) e retorna em base64.
+
+    Etapa 1: GET https://graph.facebook.com/v22.0/{media_id} → obtém URL de download
+    Etapa 2: GET {download_url} com Bearer token → obtém bytes da mídia
+    """
+    import config
+    access_token = config.WHATSAPP_ACCESS_TOKEN
+    if not access_token:
+        raise ValueError("WHATSAPP_ACCESS_TOKEN não configurado no .env")
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        # Etapa 1: obter URL de download
+        graph_url = f"https://graph.facebook.com/v22.0/{media_id}"
+        logger.info("Meta Graph API — obtendo URL de download para media_id=%s", media_id)
+        resp1 = await client.get(graph_url, headers=headers)
+        resp1.raise_for_status()
+        download_url = resp1.json().get("url", "")
+        if not download_url:
+            raise ValueError(f"Meta Graph API não retornou URL para media_id={media_id}")
+
+        # Etapa 2: baixar os bytes da mídia
+        logger.info("Meta Graph API — baixando mídia de %s", download_url[:80])
+        resp2 = await client.get(download_url, headers=headers)
+        resp2.raise_for_status()
+        return base64.b64encode(resp2.content).decode("utf-8")
+
+
+def _extract_media_id(data: dict) -> str:
+    """Extrai o media_id do payload do webhook (Cloud API).
+    
+    O campo 'id' dentro do tipo de mídia contém o media_id necessário
+    para baixar via Meta Graph API.
+    """
+    message = data.get("message", {})
+    for msg_type in ("imageMessage", "videoMessage", "audioMessage",
+                     "documentMessage", "stickerMessage"):
+        msg_data = message.get(msg_type, {})
+        if msg_data:
+            return msg_data.get("id", "")
+    return ""
+
+
+async def _get_media_b64(
+    instance: str,
+    msg_id: str,
+    media_id: str,
+    chave_api: str | None,
+) -> str:
+    """Obtém mídia em base64 via Meta Graph API (Cloud API).
+
+    1. Se media_id fornecido → baixa via Meta Graph API (2 etapas).
+    2. Caso contrário → tenta get_media_base64 da Evolution API (Baileys fallback).
+    """
+    if media_id:
+        logger.info("Baixando mídia via Meta Graph API — media_id=%s", media_id)
+        return await _download_media_from_meta(media_id)
+
+    logger.info("Tentando get_media_base64 (Baileys/fallback)")
+    result = await evolution_api.get_media_base64(instance, msg_id, chave_api)
+    return result.get("data", {}).get("base64", result.get("base64", ""))
 
 
 def get_video_duration_from_base64(video_base64: str) -> float:
@@ -86,33 +191,41 @@ def get_video_duration_from_base64(video_base64: str) -> float:
 
 
 async def process_audio(state: WorkflowState) -> WorkflowState:
-    """Processa mensagem de áudio direta.
-
-    Flow: Enviar status → Obter mídia → Transcrever → Fact-check.
-    """
+    """Processa mensagem de áudio direta."""
     instancia = state["instancia"]
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
     chave_api = state.get("chave_api")
+    body = state.get("raw_body", {})
+    data = body.get("data", {})
+
+    # Extrai media_id do payload (Cloud API)
+    media_id = _extract_media_id(data)
 
     # 1. Enviar mensagem de status
-    await evolution_api.send_text(
+    await _safe_send_status(
         instancia,
         remote_jid,
         "Estou analisando o áudio para verificar se é fake news. "
         "Isso pode levar de 10 segundos a 1 minuto.",
-        quoted_message_id=msg_id,
-        api_key=chave_api,
+        chave_api,
     )
 
-    # 1b. Enviar presença "digitando" (fire-and-forget, como n8n)
-    evolution_api.send_presence_fire_and_forget(
-        instancia, remote_jid, "composing", chave_api
-    )
+    # 2. Obter mídia (Meta Graph API ou base64)
+    try:
+        audio_b64 = await _get_media_b64(instancia, msg_id, media_id, chave_api)
+    except Exception as exc:
+        logger.error("Falha ao baixar áudio: %s", exc)
+        audio_b64 = ""
 
-    # 2. Obter mídia em base64
-    media = await evolution_api.get_media_base64(instancia, msg_id, chave_api)
-    audio_b64 = media.get("data", {}).get("base64", media.get("base64", ""))
+    if not audio_b64:
+        logger.error("Não foi possível obter o áudio (msg_id=%s, url=%s)", msg_id, media_url)
+        await _safe_send_status(
+            instancia, remote_jid,
+            "Não consegui acessar o áudio. Tente reenviar.",
+            chave_api,
+        )
+        return {}  # type: ignore[return-value]
 
     # 3. Transcrever áudio
     transcription = await ai_services.transcribe_audio(audio_b64)
@@ -136,29 +249,19 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
 
 
 async def process_text(state: WorkflowState) -> WorkflowState:
-    """Processa mensagem de texto direta.
-
-    Flow: Enviar status → Fact-check direto.
-    """
+    """Processa mensagem de texto direta."""
     instancia = state["instancia"]
     remote_jid = state["numero_quem_enviou"]
-    msg_id = state["id_mensagem"]
     mensagem = state.get("mensagem", "")
     chave_api = state.get("chave_api")
 
     # 1. Enviar mensagem de status
-    await evolution_api.send_text(
+    await _safe_send_status(
         instancia,
         remote_jid,
         "Estou analisando a mensagem para verificar se é fake news. "
         "Isso pode levar de 10 segundos a 1 minuto.",
-        quoted_message_id=msg_id,
-        api_key=chave_api,
-    )
-
-    # 1b. Enviar presença "digitando" (fire-and-forget, como n8n)
-    evolution_api.send_presence_fire_and_forget(
-        instancia, remote_jid, "composing", chave_api
+        chave_api,
     )
 
     # 2. Fact-check
@@ -177,11 +280,7 @@ async def process_text(state: WorkflowState) -> WorkflowState:
 
 
 async def process_image(state: WorkflowState) -> WorkflowState:
-    """Processa mensagem de imagem direta.
-
-    Flow: Enviar status → Obter mídia → Analisar imagem (sub-workflow) +
-          Reverse search (sub-workflow) → Merge → Verificar legenda → Fact-check.
-    """
+    """Processa mensagem de imagem direta."""
     instancia = state["instancia"]
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
@@ -189,32 +288,41 @@ async def process_image(state: WorkflowState) -> WorkflowState:
     body = state.get("raw_body", {})
     data = body.get("data", {})
 
+    # Extrai media_id do payload (Cloud API)
+    media_id = _extract_media_id(data)
+
     # 1. Enviar mensagem de status
-    await evolution_api.send_text(
+    await _safe_send_status(
         instancia,
         remote_jid,
         "Estou analisando a imagem para verificar se é fake news. "
         "Isso pode levar de 10 segundos a 1 minuto.",
-        quoted_message_id=msg_id,
-        api_key=chave_api,
+        chave_api,
     )
 
-    # 1b. Enviar presença "digitando" (fire-and-forget, como n8n)
-    evolution_api.send_presence_fire_and_forget(
-        instancia, remote_jid, "composing", chave_api
-    )
+    # 2. Obter mídia (Meta Graph API ou base64)
+    try:
+        image_b64 = await _get_media_b64(instancia, msg_id, media_id, chave_api)
+    except Exception as exc:
+        logger.error("Falha ao baixar imagem: %s", exc)
+        image_b64 = ""
 
-    # 2. Obter mídia em base64
-    media = await evolution_api.get_media_base64(instancia, msg_id, chave_api)
-    image_b64 = media.get("data", {}).get("base64", media.get("base64", ""))
+    if not image_b64:
+        logger.error("Não foi possível obter a imagem (msg_id=%s, url=%s)", msg_id, media_url)
+        await _safe_send_status(
+            instancia, remote_jid,
+            "Não consegui acessar a imagem. Tente reenviar.",
+            chave_api,
+        )
+        return {}  # type: ignore[return-value]
 
-    # 3. Analisar imagem (analyze-image sub-workflow)
+    # 3. Analisar imagem
     image_analysis = await ai_services.analyze_image_content(image_b64)
 
-    # 4. Reverse search (reverse-search sub-workflow)
+    # 4. Reverse search
     reverse_result = await ai_services.reverse_image_search(image_b64)
 
-    # 5. Montar descrição (merge dos resultados)
+    # 5. Montar descrição
     description = (
         f"{image_analysis}\n\n"
         f"Informações de pesquisa reversa da imagem em sites da web: \n"
@@ -222,17 +330,7 @@ async def process_image(state: WorkflowState) -> WorkflowState:
     )
 
     # 6. Verificar legenda
-    key = data.get("key", {})
-    is_direct = key.get("remoteJid", "").endswith("@s.whatsapp.net")
-    if is_direct:
-        caption = data.get("message", {}).get("imageMessage", {}).get("caption", "")
-    else:
-        context_info = get_context_info(data)
-        caption = (
-            context_info.get("quotedMessage", {})
-            .get("imageMessage", {})
-            .get("caption", "")
-        )
+    caption = data.get("message", {}).get("imageMessage", {}).get("caption", "")
 
     # 7. Fact-check
     content_parts = [{"textContent": description, "type": "image"}]
@@ -253,11 +351,7 @@ async def process_image(state: WorkflowState) -> WorkflowState:
 
 
 async def process_video(state: WorkflowState) -> WorkflowState:
-    """Processa mensagem de vídeo direta.
-
-    Flow: Enviar status → Obter mídia → Verificar duração → Analisar vídeo →
-          Verificar legenda → Fact-check.
-    """
+    """Processa mensagem de vídeo direta."""
     instancia = state["instancia"]
     remote_jid = state["numero_quem_enviou"]
     msg_id = state["id_mensagem"]
@@ -265,24 +359,33 @@ async def process_video(state: WorkflowState) -> WorkflowState:
     body = state.get("raw_body", {})
     data = body.get("data", {})
 
+    # Extrai media_id do payload (Cloud API)
+    media_id = _extract_media_id(data)
+
     # 1. Enviar mensagem de status
-    await evolution_api.send_text(
+    await _safe_send_status(
         instancia,
         remote_jid,
         "Estou analisando o vídeo para verificar se é fake news. "
         "Isso pode levar de 10 segundos a 1 minuto.",
-        quoted_message_id=msg_id,
-        api_key=chave_api,
+        chave_api,
     )
 
-    # 1b. Enviar presença "digitando" (fire-and-forget, como n8n)
-    evolution_api.send_presence_fire_and_forget(
-        instancia, remote_jid, "composing", chave_api
-    )
+    # 2. Obter mídia (Meta Graph API ou base64)
+    try:
+        video_b64 = await _get_media_b64(instancia, msg_id, media_id, chave_api)
+    except Exception as exc:
+        logger.error("Falha ao baixar vídeo: %s", exc)
+        video_b64 = ""
 
-    # 2. Obter mídia em base64
-    media = await evolution_api.get_media_base64(instancia, msg_id, chave_api)
-    video_b64 = media.get("data", {}).get("base64", media.get("base64", ""))
+    if not video_b64:
+        logger.error("Não foi possível obter o vídeo (msg_id=%s, url=%s)", msg_id, media_url)
+        await _safe_send_status(
+            instancia, remote_jid,
+            "Não consegui acessar o vídeo. Tente reenviar.",
+            chave_api,
+        )
+        return {}  # type: ignore[return-value]
 
     # 3. Verificar duração (máx 2 minutos = 120 segundos)
     try:
@@ -291,13 +394,12 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         duration = 0
 
     if duration >= 120:
-        await evolution_api.send_text(
+        await _safe_send_status(
             instancia,
             remote_jid,
             "Para que eu possa analizar o conteúdo do vídeo, "
             "ele precisa ter uma duração máxima de 2 minutos.",
-            quoted_message_id=msg_id,
-            api_key=chave_api,
+            chave_api,
         )
         return {"rationale": "", "duration": duration}  # type: ignore[return-value]
 
@@ -305,17 +407,7 @@ async def process_video(state: WorkflowState) -> WorkflowState:
     description = await ai_services.analyze_video(video_b64)
 
     # 5. Verificar legenda
-    key = data.get("key", {})
-    is_direct = key.get("remoteJid", "").endswith("@s.whatsapp.net")
-    if is_direct:
-        caption = data.get("message", {}).get("videoMessage", {}).get("caption", "")
-    else:
-        context_info = get_context_info(data)
-        caption = (
-            context_info.get("quotedMessage", {})
-            .get("videoMessage", {})
-            .get("caption", "")
-        )
+    caption = data.get("message", {}).get("videoMessage", {}).get("caption", "")
 
     # 6. Fact-check
     content_parts = [{"textContent": description, "type": "video"}]
@@ -340,28 +432,32 @@ async def process_quoted_audio(state: WorkflowState) -> WorkflowState:
     """Processa áudio citado em grupo (Switch9 → audioMessage)."""
     instancia = state["instancia"]
     remote_jid = state["numero_quem_enviou"]
-    msg_id = state["id_mensagem"]
     stanza_id = state.get("stanza_id", "")
     chave_api = state.get("chave_api")
 
-    await evolution_api.send_text(
+    await _safe_send_status(
         instancia,
         remote_jid,
         "Estou analisando o áudio para verificar se é fake news. "
         "Isso pode levar de 10 segundos a 1 minuto.",
-        quoted_message_id=msg_id,
-        api_key=chave_api,
+        chave_api,
     )
 
-    # Enviar presença "digitando" (fire-and-forget, como n8n)
-    evolution_api.send_presence_fire_and_forget(
-        instancia, remote_jid, "composing", chave_api
-    )
-
+    # Tenta obter o áudio da mensagem citada (pode não funcionar com Cloud API)
     media = await evolution_api.get_base64_from_quoted_message(
         instancia, stanza_id, chave_api
     )
     audio_b64 = media.get("base64", media.get("data", {}).get("base64", ""))
+
+    if not audio_b64:
+        logger.warning("Não foi possível obter áudio citado (stanzaId=%s) — Cloud API limitação", stanza_id)
+        await _safe_send_status(
+            instancia, remote_jid,
+            "Não consegui acessar o áudio citado. Com a API oficial, "
+            "mensagens citadas de mídia podem não ser acessíveis diretamente.",
+            chave_api,
+        )
+        return {}  # type: ignore[return-value]
 
     transcription = await ai_services.transcribe_audio(audio_b64)
 
@@ -386,24 +482,31 @@ async def process_quoted_text(state: WorkflowState) -> WorkflowState:
     """Processa texto citado em grupo (Switch9 → conversation)."""
     instancia = state["instancia"]
     remote_jid = state["numero_quem_enviou"]
-    msg_id = state["id_mensagem"]
     chave_api = state.get("chave_api")
     body = state.get("raw_body", {})
     data = body.get("data", {})
     context_info = get_context_info(data)
-    quoted_text = context_info.get("quotedMessage", {}).get("conversation", "")
+    quoted_msg = context_info.get("quotedMessage", {})
+    # Texto pode vir em "conversation" ou "extendedTextMessage.text"
+    quoted_text = (
+        quoted_msg.get("conversation", "")
+        or quoted_msg.get("extendedTextMessage", {}).get("text", "")
+    )
 
-    await evolution_api.send_text(
+    if not quoted_text:
+        await _safe_send_status(
+            instancia,
+            remote_jid,
+            "Não consegui identificar o texto citado. Tente encaminhar a mensagem diretamente.",
+            chave_api,
+        )
+        return {}  # type: ignore[return-value]
+
+    await _safe_send_status(
         instancia,
         remote_jid,
         "Estou analisando a mensagem para verificar se é uma fake news ou não.",
-        quoted_message_id=msg_id,
-        api_key=chave_api,
-    )
-
-    # Enviar presença "digitando" (fire-and-forget, como n8n)
-    evolution_api.send_presence_fire_and_forget(
-        instancia, remote_jid, "composing", chave_api
+        chave_api,
     )
 
     result = await fact_checker.check_text(
@@ -425,31 +528,35 @@ async def process_quoted_image(state: WorkflowState) -> WorkflowState:
     """Processa imagem citada em grupo (Switch9 → imageMessage/stickerMessage)."""
     instancia = state["instancia"]
     remote_jid = state["numero_quem_enviou"]
-    msg_id = state["id_mensagem"]
     stanza_id = state.get("stanza_id", "")
     chave_api = state.get("chave_api")
     body = state.get("raw_body", {})
     data = body.get("data", {})
     context_info = get_context_info(data)
 
-    await evolution_api.send_text(
+    await _safe_send_status(
         instancia,
         remote_jid,
         "Estou analisando a imagem para verificar se é fake news. "
         "Isso pode levar de 10 segundos a 1 minuto.",
-        quoted_message_id=msg_id,
-        api_key=chave_api,
+        chave_api,
     )
 
-    # Enviar presença "digitando" (fire-and-forget, como n8n)
-    evolution_api.send_presence_fire_and_forget(
-        instancia, remote_jid, "composing", chave_api
-    )
-
+    # Tenta obter a imagem da mensagem citada (pode não funcionar com Cloud API)
     media = await evolution_api.get_base64_from_quoted_message(
         instancia, stanza_id, chave_api
     )
     image_b64 = media.get("base64", media.get("data", {}).get("base64", ""))
+
+    if not image_b64:
+        logger.warning("Não foi possível obter imagem citada (stanzaId=%s) — Cloud API limitação", stanza_id)
+        await _safe_send_status(
+            instancia, remote_jid,
+            "Não consegui acessar a imagem citada. Com a API oficial, "
+            "mensagens citadas de mídia podem não ser acessíveis diretamente.",
+            chave_api,
+        )
+        return {}  # type: ignore[return-value]
 
     image_analysis = await ai_services.analyze_image_content(image_b64)
     reverse_result = await ai_services.reverse_image_search(image_b64)
@@ -487,31 +594,35 @@ async def process_quoted_video(state: WorkflowState) -> WorkflowState:
     """Processa vídeo citado em grupo (Switch9 → videoMessage)."""
     instancia = state["instancia"]
     remote_jid = state["numero_quem_enviou"]
-    msg_id = state["id_mensagem"]
     stanza_id = state.get("stanza_id", "")
     chave_api = state.get("chave_api")
     body = state.get("raw_body", {})
     data = body.get("data", {})
     context_info = get_context_info(data)
 
-    await evolution_api.send_text(
+    await _safe_send_status(
         instancia,
         remote_jid,
         "Estou analisando o vídeo para verificar se é fake news. "
         "Isso pode levar de 10 segundos a 1 minuto.",
-        quoted_message_id=msg_id,
-        api_key=chave_api,
+        chave_api,
     )
 
-    # Enviar presença "digitando" (fire-and-forget, como n8n)
-    evolution_api.send_presence_fire_and_forget(
-        instancia, remote_jid, "composing", chave_api
-    )
-
+    # Tenta obter o vídeo da mensagem citada (pode não funcionar com Cloud API)
     media = await evolution_api.get_base64_from_quoted_message(
         instancia, stanza_id, chave_api
     )
     video_b64 = media.get("base64", media.get("data", {}).get("base64", ""))
+
+    if not video_b64:
+        logger.warning("Não foi possível obter vídeo citado (stanzaId=%s) — Cloud API limitação", stanza_id)
+        await _safe_send_status(
+            instancia, remote_jid,
+            "Não consegui acessar o vídeo citado. Com a API oficial, "
+            "mensagens citadas de mídia podem não ser acessíveis diretamente.",
+            chave_api,
+        )
+        return {}  # type: ignore[return-value]
 
     # Verificar duração
     try:
@@ -520,13 +631,12 @@ async def process_quoted_video(state: WorkflowState) -> WorkflowState:
         duration = 0
 
     if duration >= 120:
-        await evolution_api.send_text(
+        await _safe_send_status(
             instancia,
             remote_jid,
             "Para que eu possa analizar o conteúdo do vídeo, "
             "ele precisa ter uma duração máxima de 2 minutos.",
-            quoted_message_id=msg_id,
-            api_key=chave_api,
+            chave_api,
         )
         return {"rationale": "", "duration": duration}  # type: ignore[return-value]
 

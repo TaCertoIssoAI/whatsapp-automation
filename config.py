@@ -9,6 +9,10 @@ load_dotenv()
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
 
+# WhatsApp Business Cloud API (para download de mídia e marcar como lido)
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+
 # Google Gemini
 GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")
 
