@@ -84,9 +84,13 @@ def get_video_duration_from_base64(video_base64: str) -> float:
 
 async def process_audio(state: WorkflowState) -> WorkflowState:
     """Processa mensagem de áudio: download → transcrição → fact-check."""
-    remote_jid = state["numero_quem_enviou"]
-    msg_id = state["id_mensagem"]
+    remote_jid = state.get("numero_quem_enviou", "")
+    msg_id = state.get("id_mensagem", "")
     media_id = state.get("media_id", "")
+
+    if not remote_jid or not media_id:
+        logger.error("process_audio: dados insuficientes (jid=%s, media=%s)", remote_jid, media_id)
+        return {"rationale": ""}  # type: ignore[return-value]
 
     try:
         await whatsapp_api.send_text(

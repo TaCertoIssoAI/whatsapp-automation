@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 _MAX_RETRIES = 3
 _RETRY_DELAYS = [2, 4, 8]
 
+# Timeout individual para cada chamada Gemini (evita que uma chamada trave tudo)
+_GEMINI_CALL_TIMEOUT = 120  # 2 minutos por tentativa
+
 
 async def _retry_async(func, *args, label: str = ""):
     """Executa função async com retry e backoff para erros transientes."""
@@ -23,6 +26,18 @@ async def _retry_async(func, *args, label: str = ""):
     for attempt in range(_MAX_RETRIES):
         try:
             return await func(*args)
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            # Timeout do asyncio.wait_for — sempre transiente
+            last_exc = e
+            if attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_DELAYS[attempt]
+                logger.warning(
+                    "%s timeout (tentativa %d/%d), retry em %ds",
+                    label, attempt + 1, _MAX_RETRIES, delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
         except Exception as e:
             last_exc = e
             error_str = str(e).lower()
@@ -78,7 +93,9 @@ async def transcribe_audio(audio_base64: str) -> str:
                     TRANSCRIPTION_PROMPT,
                 ],
             )
-        response = await asyncio.to_thread(_call)
+        response = await asyncio.wait_for(
+            asyncio.to_thread(_call), timeout=_GEMINI_CALL_TIMEOUT
+        )
         return response.text or ""
 
     return await _retry_async(_do, label="transcribe_audio")
@@ -128,7 +145,9 @@ async def generate_tts(text: str) -> bytes:
                     ),
                 ),
             )
-        response = await asyncio.to_thread(_call)
+        response = await asyncio.wait_for(
+            asyncio.to_thread(_call), timeout=_GEMINI_CALL_TIMEOUT
+        )
         audio_data = response.candidates[0].content.parts[0].inline_data.data
         ogg_bytes = await asyncio.to_thread(_pcm_to_ogg_opus, audio_data)
         return ogg_bytes
@@ -184,7 +203,9 @@ async def analyze_video(video_base64: str) -> str:
                     model=config.GEMINI_VIDEO_MODEL,
                     contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
                 )
-            response = await asyncio.to_thread(_generate)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_generate), timeout=_GEMINI_CALL_TIMEOUT
+            )
             return response.text or ""
 
         return await _retry_async(_do, label="analyze_video")
@@ -240,7 +261,9 @@ async def analyze_image_content(image_base64: str) -> str:
                     IMAGE_ANALYSIS_PROMPT,
                 ],
             )
-        response = await asyncio.to_thread(_call)
+        response = await asyncio.wait_for(
+            asyncio.to_thread(_call), timeout=_GEMINI_CALL_TIMEOUT
+        )
         return response.text or ""
 
     return await _retry_async(_do, label="analyze_image")

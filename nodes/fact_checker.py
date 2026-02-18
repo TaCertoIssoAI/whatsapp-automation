@@ -7,7 +7,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+_TIMEOUT = httpx.Timeout(90.0, connect=10.0)
 _MAX_RETRIES = 3
 _RETRY_DELAYS = [2, 4, 8]  # segundos
 

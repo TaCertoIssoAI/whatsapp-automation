@@ -5,8 +5,10 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Instalar dependências do sistema necessárias para pydub e ffmpeg
+# tini = init process correto para containers (repassa SIGTERM para Python)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar requirements primeiro (melhor uso de cache do Docker)
@@ -25,5 +27,8 @@ EXPOSE 5000
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Comando para executar a aplicação
+# tini como entrypoint garante que SIGTERM é repassado corretamente
+# Sem isso, Docker envia SIGTERM, Python ignora, e após 10s faz SIGKILL
+# matando todas as tasks em processamento instantaneamente
+ENTRYPOINT ["tini", "--"]
 CMD ["python", "main.py"]

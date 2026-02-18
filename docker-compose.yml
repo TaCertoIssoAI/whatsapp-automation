@@ -5,6 +5,7 @@ services:
     build: .
     container_name: whatsapp-integration
     restart: unless-stopped
+    stop_grace_period: 45s
     ports:
       - "5000:5000"
     environment:

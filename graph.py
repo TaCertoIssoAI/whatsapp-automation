@@ -178,6 +178,12 @@ def _route_after_rationale(state: WorkflowState) -> str:
 
 
 def compile_graph():
-    """Compila o grafo LangGraph e retorna o executor."""
+    """Compila o grafo LangGraph e retorna o executor.
+
+    Se falhar, loga o erro e re-lança para que o startup saiba.
+    """
+    logger.info("Compilando grafo LangGraph...")
     graph = build_graph()
-    return graph.compile()
+    compiled = graph.compile()
+    logger.info("Grafo LangGraph compilado com sucesso")
+    return compiled
