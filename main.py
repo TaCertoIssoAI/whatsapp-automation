@@ -1,19 +1,18 @@
 """Servidor FastAPI com webhook para a WhatsApp Business Cloud API.
 
-v3.1.0 — Arquitetura ACK-first com fila interna.
+v4.0.0 — Arquitetura production-ready para alta concorrência.
 
-O webhook retorna 200 em < 5ms SEMPRE, sem nenhum await pesado no caminho
-crítico. O processamento ocorre em workers dedicados consumindo uma fila
-asyncio.Queue, completamente desacoplados do event loop do HTTP.
-
-Mudanças vs v3.0.0:
-- Fila interna (asyncio.Queue) entre webhook e processamento
-- Webhook faz apenas: ler body raw → enfileirar → retornar 200
-  (sem await de lock, sem dedup síncrono, sem lógica de roteamento)
-- Workers dedicados (QUEUE_WORKERS=3) consomem a fila em background
-- Dedup movido para dentro do worker (não bloqueia o webhook)
-- Payload raw (bytes) enfileirado, JSON parse feito no worker
-- Sem await pesado no path crítico do webhook
+Mudanças vs v3.1.0:
+- _QUEUE_WORKERS: 3 → 5
+- Semáforo global (_concurrency_sem) limita processamento a _MAX_CONCURRENT
+  mensagens simultâneas — evita saturação de CPU/memória/APIs externas
+- ThreadPoolExecutor: 20 → 32 threads para Gemini sync calls
+- Fila: 500 → 2000 itens (margem maior para picos)
+- Dedup simplificado sem asyncio.Lock (dict ops são atômicas no CPython)
+- Health check com métricas: concurrency, total_received/processed/errors
+- Shutdown fecha clients HTTP dos módulos (whatsapp_api, fact_checker)
+- Módulos usam httpx client singleton com connection pool (não cria por request)
+- ai_services.py usa asyncio.Semaphore para limitar chamadas Gemini concorrentes
 """
 
 import asyncio
@@ -38,54 +37,59 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("main")
 
-app = FastAPI(title="TaCertoIssoAI", version="3.1.0")
+app = FastAPI(title="TaCertoIssoAI", version="4.0.0")
 
-# Workflow compilado no startup (NÃO no import)
+# ── Constantes de tunning ──
+_QUEUE_WORKERS = 5           # workers consumindo a fila
+_QUEUE_MAX = 2000            # tamanho máximo da fila
+_MAX_CONCURRENT = 30         # máx. de mensagens processando simultaneamente
+_THREAD_POOL_SIZE = 32       # threads para chamadas síncronas (Gemini)
+_MESSAGE_TIMEOUT = 300       # 5 min por mensagem
+_DEDUP_TTL = 300             # 5 min de TTL no cache de dedup
+
+# ── Estado global (inicializado no startup) ──
 _workflow = None
-
-# ── Fila de mensagens ──
-# O webhook apenas enfileira o payload raw. Workers dedicados processam.
-_queue: asyncio.Queue  # inicializado no startup
-_QUEUE_WORKERS = 3      # workers consumindo a fila em paralelo
-_QUEUE_MAX = 500        # tamanho máximo da fila (evita memory leak)
-
-# Tracking de tasks ativas para graceful shutdown
+_queue: asyncio.Queue
+_concurrency_sem: asyncio.Semaphore
 _active_tasks: set[asyncio.Task] = set()
 _worker_tasks: list[asyncio.Task] = []
+_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_THREAD_POOL_SIZE)
 
-# ThreadPoolExecutor com pool maior para Gemini sync calls
-_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
+# ── Contadores ──
+_total_received = 0
+_total_processed = 0
+_total_errors = 0
 
-# Timeout máximo por mensagem (5 minutos)
-_MESSAGE_TIMEOUT = 300
-
-# ── Deduplicação (usada pelos workers, não pelo webhook) ──
+# ── Dedup (sem lock — operações em dict são atômicas no CPython) ──
 _processed_messages: dict[str, float] = {}
-_DEDUP_TTL = 300
-_dedup_lock = asyncio.Lock()
 
 
-async def _is_duplicate(message_id: str) -> bool:
-    """Verifica e registra mensagem para evitar processamento duplicado."""
+def _is_duplicate(message_id: str) -> bool:
+    """Verifica duplicação — chamado SÓ dentro dos workers.
+
+    Sem lock: operações dict.__contains__ e dict.__setitem__ são
+    atômicas no CPython (GIL). Limpeza lazy quando > 2000 entradas.
+    """
     if not message_id:
         return False
-    now = time.monotonic()
-    async with _dedup_lock:
-        if len(_processed_messages) > 1000:
-            expired = sorted(_processed_messages.items(), key=lambda x: x[1])[:500]
-            for k, _ in expired:
-                del _processed_messages[k]
-        else:
-            expired_keys = [k for k, t in _processed_messages.items() if now - t > _DEDUP_TTL]
-            for k in expired_keys:
-                del _processed_messages[k]
 
-        if message_id in _processed_messages:
-            return True
-        _processed_messages[message_id] = now
-        return False
+    now = time.monotonic()
+
+    # Limpeza lazy
+    if len(_processed_messages) > 2000:
+        to_delete = [
+            k for k, t in _processed_messages.items() if now - t > _DEDUP_TTL
+        ]
+        for k in to_delete:
+            del _processed_messages[k]
+
+    if message_id in _processed_messages:
+        return True
+
+    _processed_messages[message_id] = now
+    return False
 
 
 def _build_single_message_body(
@@ -119,79 +123,90 @@ def _build_single_message_body(
         return copy.deepcopy(original_body)
 
 
-async def process_message(body: dict, message_id: str, sender: str) -> None:
-    """Processa uma mensagem individual via LangGraph com timeout global."""
-    logger.info("[%s] Iniciando processamento (de=%s)", message_id, sender)
-    try:
-        initial_state = {
-            "raw_body": body,
-            "endpoint_api": config.FACT_CHECK_API_URL,
-        }
-        await asyncio.wait_for(
-            _workflow.ainvoke(initial_state),
-            timeout=_MESSAGE_TIMEOUT,
+async def _process_message(body: dict, message_id: str, sender: str) -> None:
+    """Processa uma mensagem via LangGraph, com semáforo de concorrência.
+
+    O semáforo _concurrency_sem garante que no máximo _MAX_CONCURRENT
+    mensagens processam simultaneamente. Isso evita saturação das APIs
+    externas (Gemini, WhatsApp, Fact-check) e protege o event loop.
+    """
+    global _total_processed, _total_errors
+
+    async with _concurrency_sem:
+        logger.info(
+            "[%s] Processando (de=%s, concurrent=%d/%d)",
+            message_id[:30], sender,
+            _MAX_CONCURRENT - _concurrency_sem._value, _MAX_CONCURRENT,
         )
-        logger.info("[%s] Processamento concluído com sucesso", message_id)
-    except asyncio.TimeoutError:
-        logger.error("[%s] TIMEOUT após %ds — task abortada", message_id, _MESSAGE_TIMEOUT)
-        if sender:
-            with suppress(Exception):
-                from nodes import whatsapp_api
-                await whatsapp_api.send_text(
-                    sender,
-                    "⚠️ O processamento da sua mensagem demorou demais e foi cancelado. "
-                    "Por favor, tente enviar novamente.",
-                )
-    except asyncio.CancelledError:
-        logger.warning("[%s] Task cancelada (shutdown?)", message_id)
-        raise
-    except Exception:
-        logger.exception("[%s] Erro ao processar mensagem", message_id)
-        if sender:
-            with suppress(Exception):
-                from nodes import whatsapp_api
-                await whatsapp_api.send_text(
-                    sender,
-                    "⚠️ Desculpe, ocorreu um erro inesperado ao processar sua mensagem. "
-                    "Por favor, tente enviar novamente.",
-                )
+        try:
+            initial_state = {
+                "raw_body": body,
+                "endpoint_api": config.FACT_CHECK_API_URL,
+            }
+            await asyncio.wait_for(
+                _workflow.ainvoke(initial_state),
+                timeout=_MESSAGE_TIMEOUT,
+            )
+            _total_processed += 1
+            logger.info("[%s] ✓ Concluído", message_id[:30])
+
+        except asyncio.TimeoutError:
+            _total_errors += 1
+            logger.error("[%s] ✗ TIMEOUT após %ds", message_id[:30], _MESSAGE_TIMEOUT)
+            if sender:
+                with suppress(Exception):
+                    from nodes import whatsapp_api
+                    await whatsapp_api.send_text(
+                        sender,
+                        "⚠️ O processamento demorou demais e foi cancelado. "
+                        "Por favor, tente enviar novamente.",
+                    )
+        except asyncio.CancelledError:
+            logger.warning("[%s] Task cancelada (shutdown?)", message_id[:30])
+            raise
+        except Exception:
+            _total_errors += 1
+            logger.exception("[%s] ✗ Erro no processamento", message_id[:30])
+            if sender:
+                with suppress(Exception):
+                    from nodes import whatsapp_api
+                    await whatsapp_api.send_text(
+                        sender,
+                        "⚠️ Ocorreu um erro inesperado. "
+                        "Por favor, tente enviar novamente.",
+                    )
 
 
 def _task_done_callback(task: asyncio.Task) -> None:
-    """Callback para logar exceções e remover task do set de tracking."""
+    """Remove task do tracking e loga erros não tratados."""
     _active_tasks.discard(task)
     if task.cancelled():
-        logger.warning("Task %s foi cancelada", task.get_name())
         return
     exc = task.exception()
     if exc:
-        logger.error(
-            "Task %s falhou com exceção não tratada: %s",
-            task.get_name(), exc, exc_info=exc,
-        )
+        logger.error("Task %s falhou: %s", task.get_name(), exc, exc_info=exc)
 
 
 async def _queue_worker(worker_id: int) -> None:
-    """Worker que consome a fila e processa mensagens.
+    """Worker que consome a fila e despacha mensagens para processamento.
 
-    Totalmente desacoplado do event loop HTTP. O webhook apenas enfileira
-    o payload bytes — este worker faz todo o trabalho pesado.
+    Faz: JSON parse → dedup → build body → create_task(_process_message).
+    O semáforo _concurrency_sem dentro de _process_message garante
+    que não há sobrecarga mesmo com muitas tasks simultâneas.
     """
-    logger.info("Worker %d iniciado", worker_id)
+    logger.info("[worker-%d] Iniciado", worker_id)
+
     while True:
         try:
-            # Aguarda próximo item da fila (bloqueia este worker, não o webhook)
             payload: bytes = await _queue.get()
 
             try:
-                # Parse JSON feito aqui, fora do caminho crítico do webhook
                 try:
                     body = json.loads(payload)
                 except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                    logger.error("[worker-%d] Payload inválido ignorado: %s", worker_id, e)
+                    logger.error("[worker-%d] JSON inválido: %s", worker_id, e)
                     continue
 
-                # Processar todas as mensagens do payload
                 for entry_idx, entry in enumerate(body.get("entry", [])):
                     for change_idx, change in enumerate(entry.get("changes", [])):
                         try:
@@ -210,53 +225,55 @@ async def _queue_worker(worker_id: int) -> None:
                                     msg_type = message.get("type", "unknown")
                                     sender = message.get("from", "unknown")
 
-                                    if msg_type in ("reaction", "system", "ephemeral", "unsupported"):
-                                        logger.info(
-                                            "[worker-%d] Tipo ignorado: %s de %s",
-                                            worker_id, msg_type, sender,
+                                    if msg_type in (
+                                        "reaction", "system", "ephemeral",
+                                        "unsupported", "request_welcome",
+                                    ):
+                                        continue
+
+                                    if _is_duplicate(msg_id):
+                                        logger.debug(
+                                            "[worker-%d] Dup: %s",
+                                            worker_id, msg_id[:20],
                                         )
                                         continue
 
                                     logger.info(
-                                        "[worker-%d] >>> Processando: id=%s tipo=%s de=%s",
-                                        worker_id, msg_id, msg_type, sender,
+                                        "[worker-%d] >>> id=%s tipo=%s de=%s",
+                                        worker_id, msg_id[:30], msg_type, sender,
                                     )
 
-                                    if await _is_duplicate(msg_id):
-                                        logger.info(
-                                            "[worker-%d] Duplicado ignorado: %s",
-                                            worker_id, msg_id,
-                                        )
-                                        continue
-
                                     isolated_body = _build_single_message_body(
-                                        body, entry_idx, change_idx, msg_idx
+                                        body, entry_idx, change_idx, msg_idx,
                                     )
 
                                     task = asyncio.create_task(
-                                        process_message(isolated_body, msg_id, sender),
-                                        name=f"msg-{msg_id}",
+                                        _process_message(
+                                            isolated_body, msg_id, sender,
+                                        ),
+                                        name=f"msg-{msg_id[-12:]}",
                                     )
                                     _active_tasks.add(task)
                                     task.add_done_callback(_task_done_callback)
 
                                 except Exception:
                                     logger.exception(
-                                        "[worker-%d] Erro ao despachar mensagem %d",
+                                        "[worker-%d] Erro msg %d",
                                         worker_id, msg_idx,
                                     )
                         except Exception:
                             logger.exception(
-                                "[worker-%d] Erro ao processar change", worker_id
+                                "[worker-%d] Erro change", worker_id,
                             )
             finally:
                 _queue.task_done()
 
         except asyncio.CancelledError:
-            logger.info("Worker %d encerrado", worker_id)
+            logger.info("[worker-%d] Encerrado", worker_id)
             break
         except Exception:
-            logger.exception("[worker-%d] Erro inesperado no worker", worker_id)
+            logger.exception("[worker-%d] Erro inesperado", worker_id)
+            await asyncio.sleep(0.1)
 
 
 # ── Eventos de startup/shutdown ──
@@ -264,93 +281,100 @@ async def _queue_worker(worker_id: int) -> None:
 
 @app.on_event("startup")
 async def startup_event():
-    """Compilar grafo, iniciar workers e validar configuração."""
-    global _workflow, _queue
+    """Inicializa fila, workers, grafo, executor e valida config."""
+    global _workflow, _queue, _concurrency_sem
 
     logger.info("=" * 60)
-    logger.info("TaCertoIssoAI WhatsApp Bot v3.1.0 iniciando...")
+    logger.info("TaCertoIssoAI WhatsApp Bot v4.0.0 iniciando...")
     logger.info("=" * 60)
 
-    # Fila de payloads (bytes) a processar
+    # Fila de payloads (bytes)
     _queue = asyncio.Queue(maxsize=_QUEUE_MAX)
 
-    # Compilar grafo dentro do startup (NÃO no import do módulo)
+    # Semáforo de concorrência
+    _concurrency_sem = asyncio.Semaphore(_MAX_CONCURRENT)
+
+    # Compilar grafo LangGraph
     try:
         from graph import compile_graph
         _workflow = compile_graph()
         logger.info("Grafo LangGraph compilado com sucesso")
     except Exception:
-        logger.exception("FALHA CRÍTICA ao compilar grafo LangGraph!")
+        logger.exception("FALHA CRÍTICA ao compilar grafo!")
 
-    # Configurar ThreadPoolExecutor para asyncio.to_thread()
+    # ThreadPoolExecutor como executor padrão
     loop = asyncio.get_running_loop()
     loop.set_default_executor(_thread_pool)
-    logger.info("ThreadPoolExecutor configurado com 20 workers")
+    logger.info("ThreadPoolExecutor: %d threads", _THREAD_POOL_SIZE)
 
-    # Iniciar workers de fila
+    # Iniciar workers
     for i in range(_QUEUE_WORKERS):
         t = asyncio.create_task(_queue_worker(i), name=f"queue-worker-{i}")
         _worker_tasks.append(t)
-    logger.info("%d queue workers iniciados", _QUEUE_WORKERS)
+    logger.info(
+        "%d queue workers, max concurrent=%d",
+        _QUEUE_WORKERS, _MAX_CONCURRENT,
+    )
 
-    # Verificar variáveis críticas
-    issues = []
-    if not config.WHATSAPP_ACCESS_TOKEN:
-        issues.append("WHATSAPP_ACCESS_TOKEN não configurado")
-    if not config.WHATSAPP_PHONE_NUMBER_ID:
-        issues.append("WHATSAPP_PHONE_NUMBER_ID não configurado")
-    if not config.WHATSAPP_VERIFY_TOKEN:
-        issues.append("WHATSAPP_VERIFY_TOKEN não configurado")
-    if not config.GOOGLE_GEMINI_API_KEY:
-        issues.append("GOOGLE_GEMINI_API_KEY não configurado")
-    if not config.FACT_CHECK_API_URL:
-        issues.append("FACT_CHECK_API_URL não configurado")
+    # Validar config
+    missing = []
+    for var_name in (
+        "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID",
+        "WHATSAPP_VERIFY_TOKEN", "GOOGLE_GEMINI_API_KEY",
+        "FACT_CHECK_API_URL",
+    ):
+        if not getattr(config, var_name, ""):
+            missing.append(var_name)
+
+    if missing:
+        logger.error("VARS FALTANDO: %s", ", ".join(missing))
+    else:
+        logger.info("Config OK")
 
     if config.WHATSAPP_APP_SECRET:
-        logger.info("Verificação de assinatura ATIVA (APP_SECRET configurado)")
+        logger.info("Assinatura HMAC: ATIVA")
     else:
-        logger.warning("Verificação de assinatura DESATIVADA (APP_SECRET vazio)")
+        logger.warning("Assinatura HMAC: DESATIVADA")
 
-    if issues:
-        for issue in issues:
-            logger.error("CONFIG: %s", issue)
-        logger.error("O bot pode não funcionar corretamente sem essas configurações!")
-    else:
-        logger.info("Todas as configurações críticas estão presentes")
-
-    logger.info("API URL: %s", config.WHATSAPP_API_BASE_URL)
-    logger.info("Fact-check API: %s", config.FACT_CHECK_API_URL)
+    logger.info("API: %s", config.WHATSAPP_API_BASE_URL)
+    logger.info("Fact-check: %s", config.FACT_CHECK_API_URL)
     logger.info("Porta: %d", config.WEBHOOK_PORT)
-    logger.info("Servidor pronto para receber webhooks!")
+    logger.info("Servidor pronto!")
     logger.info("=" * 60)
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Graceful shutdown: para workers e aguarda tasks ativas."""
-    # Cancelar workers de fila
+    """Graceful shutdown com timeout."""
+    logger.info("Shutdown iniciado...")
+
+    # 1. Cancelar workers
     for t in _worker_tasks:
         t.cancel()
     if _worker_tasks:
         await asyncio.gather(*_worker_tasks, return_exceptions=True)
-        logger.info("Queue workers encerrados")
+        logger.info("Workers encerrados")
 
-    # Aguardar tasks de processamento ativas
+    # 2. Aguardar tasks ativas (max 30s)
     if _active_tasks:
-        logger.info(
-            "Shutdown: aguardando %d tasks ativas (max 30s)...",
-            len(_active_tasks),
-        )
+        logger.info("Aguardando %d tasks (max 30s)...", len(_active_tasks))
         done, pending = await asyncio.wait(
-            _active_tasks, timeout=30, return_when=asyncio.ALL_COMPLETED
+            _active_tasks, timeout=30, return_when=asyncio.ALL_COMPLETED,
         )
         if pending:
-            logger.warning(
-                "Shutdown: %d tasks ainda pendentes, cancelando...", len(pending)
-            )
+            logger.warning("Cancelando %d tasks pendentes", len(pending))
             for task in pending:
                 task.cancel()
             await asyncio.wait(pending, timeout=5)
+
+    # 3. Fechar clients HTTP dos módulos
+    try:
+        from nodes import whatsapp_api, fact_checker
+        await whatsapp_api.close_client()
+        await fact_checker.close_client()
+    except Exception:
+        pass
+
     _thread_pool.shutdown(wait=False)
     logger.info("Shutdown completo")
 
@@ -360,17 +384,13 @@ async def shutdown_event():
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Loga TODAS as requests HTTP para visibilidade total."""
+    """Loga todas as requests HTTP."""
     start = time.monotonic()
-    method = request.method
-    path = request.url.path
-
     response = await call_next(request)
-
     elapsed = (time.monotonic() - start) * 1000
     logger.info(
         "%s %s → %d (%.0fms)",
-        method, path, response.status_code, elapsed,
+        request.method, request.url.path, response.status_code, elapsed,
     )
     return response
 
@@ -380,86 +400,82 @@ async def log_requests(request: Request, call_next):
 
 @app.get("/webhook", response_model=None)
 async def webhook_verify(request: Request):
-    """Verificação de webhook (handshake do Meta)."""
+    """Handshake de verificação do Meta."""
     mode = request.query_params.get("hub.mode", "")
     token = request.query_params.get("hub.verify_token", "")
     challenge = request.query_params.get("hub.challenge", "")
 
-    logger.info("Webhook verify: mode=%s token=%s", mode, "***" if token else "(vazio)")
+    logger.info("Verify: mode=%s token=%s", mode, "***" if token else "(vazio)")
 
     if mode == "subscribe" and token == config.WHATSAPP_VERIFY_TOKEN:
-        logger.info("Webhook verificado com sucesso")
+        logger.info("Webhook verificado ✓")
         return PlainTextResponse(content=challenge, status_code=200)
 
-    logger.warning("Falha na verificação do webhook (mode=%s)", mode)
+    logger.warning("Verify falhou (mode=%s)", mode)
     return JSONResponse(content={"error": "Forbidden"}, status_code=403)
 
 
 @app.post("/webhook")
 async def webhook_receive(request: Request) -> JSONResponse:
-    """Recebe notificações do webhook — ACK-only, retorna 200 em < 5ms.
+    """Webhook ACK-only — retorna 200 em < 5ms."""
+    global _total_received
 
-    O único trabalho feito aqui:
-    1) Ler bytes do body
-    2) Verificar assinatura HMAC (CPU puro, < 1ms)
-    3) Enfileirar o payload bytes na _queue
-    4) Retornar 200
-
-    TODO PROCESSAMENTO (JSON parse, dedup, LangGraph) é feito pelos workers.
-    Isso garante que o Meta nunca recebe timeout nem erro neste endpoint.
-    """
-    # 1) Ler payload raw (< 1ms)
     try:
         payload = await request.body()
     except Exception:
-        logger.exception("Falha ao ler body do webhook")
         return JSONResponse(content={"status": "ok"}, status_code=200)
 
-    # 2) Verificar assinatura HMAC (< 0.1ms, CPU puro)
+    # HMAC (best-effort)
     app_secret = config.WHATSAPP_APP_SECRET
     if app_secret:
-        signature = request.headers.get("X-Hub-Signature-256", "")
-        if signature:
+        sig = request.headers.get("X-Hub-Signature-256", "")
+        if sig:
             try:
                 expected = hmac.HMAC(
-                    app_secret.encode(), payload, hashlib.sha256
+                    app_secret.encode(), payload, hashlib.sha256,
                 ).hexdigest()
-                received = signature.removeprefix("sha256=")
+                received = sig.removeprefix("sha256=")
                 if not hmac.compare_digest(expected, received):
-                    logger.error(
-                        "ASSINATURA INVÁLIDA — processando mesmo assim "
-                        "(verifique WHATSAPP_APP_SECRET)"
-                    )
+                    logger.error("HMAC inválido!")
             except Exception:
-                logger.exception("Erro ao verificar assinatura")
+                pass
 
-    # 3) Enfileirar o payload para processamento assíncrono
-    #    put_nowait() não bloqueia — se a fila estiver cheia loga e descarta
+    # Enfileirar
     try:
         _queue.put_nowait(payload)
-        logger.debug("Payload enfileirado (qsize=%d)", _queue.qsize())
+        _total_received += 1
     except asyncio.QueueFull:
-        logger.error(
-            "Fila cheia (%d itens)! Payload descartado — aumente _QUEUE_MAX",
-            _QUEUE_MAX,
-        )
+        logger.error("FILA CHEIA (%d)! Payload descartado!", _QUEUE_MAX)
 
-    # 4) Retornar 200 IMEDIATAMENTE
     return JSONResponse(content={"status": "received"}, status_code=200)
 
 
 @app.get("/health")
 async def health_check() -> JSONResponse:
-    """Health check endpoint."""
+    """Health check com métricas."""
+    try:
+        queue_size = _queue.qsize()
+    except Exception:
+        queue_size = -1
+
+    try:
+        concurrent_now = _MAX_CONCURRENT - _concurrency_sem._value
+    except Exception:
+        concurrent_now = -1
+
     return JSONResponse(
         content={
             "status": "ok",
-            "version": "3.1.0",
+            "version": "4.0.0",
             "workflow_ready": _workflow is not None,
-            "queue_size": _queue.qsize() if _queue else 0,
+            "queue_size": queue_size,
             "active_tasks": len(_active_tasks),
+            "concurrency": f"{concurrent_now}/{_MAX_CONCURRENT}",
+            "total_received": _total_received,
+            "total_processed": _total_processed,
+            "total_errors": _total_errors,
             "dedup_cache_size": len(_processed_messages),
-            "thread_pool_workers": _thread_pool._max_workers,
+            "thread_pool_workers": _THREAD_POOL_SIZE,
         },
         status_code=200,
     )
@@ -471,9 +487,10 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=config.WEBHOOK_PORT,
+        workers=1,
         reload=False,
         log_level="info",
         timeout_keep_alive=120,
-        # limit_concurrency alto pois o handler retorna 200 em < 5ms
-        limit_concurrency=200,
+        limit_concurrency=500,
+        limit_max_requests=None,
     )

@@ -19,6 +19,11 @@ _RETRY_DELAYS = [2, 4, 8]
 # Timeout individual para cada chamada Gemini (evita que uma chamada trave tudo)
 _GEMINI_CALL_TIMEOUT = 120  # 2 minutos por tentativa
 
+# Semáforo que limita quantas chamadas Gemini rodam em paralelo.
+# Gemini tem rate limits e cada chamada consome uma thread do pool.
+# Sem isso, 50 mensagens simultâneas = 50 chamadas Gemini = pool saturado.
+_GEMINI_SEMAPHORE = asyncio.Semaphore(10)
+
 
 async def _retry_async(func, *args, label: str = ""):
     """Executa função async com retry e backoff para erros transientes."""
@@ -98,7 +103,8 @@ async def transcribe_audio(audio_base64: str) -> str:
         )
         return response.text or ""
 
-    return await _retry_async(_do, label="transcribe_audio")
+    async with _GEMINI_SEMAPHORE:
+        return await _retry_async(_do, label="transcribe_audio")
 
 
 # ──────────────────────── Gemini — TTS ────────────────────────
@@ -152,7 +158,8 @@ async def generate_tts(text: str) -> bytes:
         ogg_bytes = await asyncio.to_thread(_pcm_to_ogg_opus, audio_data)
         return ogg_bytes
 
-    return await _retry_async(_do, label="generate_tts")
+    async with _GEMINI_SEMAPHORE:
+        return await _retry_async(_do, label="generate_tts")
 
 
 # ──────────────────────── Google Gemini — Análise de Vídeo ────────────────────────
@@ -208,7 +215,8 @@ async def analyze_video(video_base64: str) -> str:
             )
             return response.text or ""
 
-        return await _retry_async(_do, label="analyze_video")
+        async with _GEMINI_SEMAPHORE:
+            return await _retry_async(_do, label="analyze_video")
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -266,7 +274,8 @@ async def analyze_image_content(image_base64: str) -> str:
         )
         return response.text or ""
 
-    return await _retry_async(_do, label="analyze_image")
+    async with _GEMINI_SEMAPHORE:
+        return await _retry_async(_do, label="analyze_image")
 
 
 # ──────────────────────── Google Cloud Vision — Reverse Image Search ──────
@@ -274,6 +283,24 @@ async def analyze_image_content(image_base64: str) -> str:
 
 _VISION_API_URL = "https://vision.googleapis.com/v1/images:annotate"
 _VISION_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+
+# Client singleton para Vision API
+_vision_client: httpx.AsyncClient | None = None
+
+
+def _get_vision_client() -> httpx.AsyncClient:
+    """Retorna client singleton para Vision API."""
+    global _vision_client
+    if _vision_client is None or _vision_client.is_closed:
+        _vision_client = httpx.AsyncClient(
+            timeout=_VISION_TIMEOUT,
+            limits=httpx.Limits(
+                max_connections=10,
+                max_keepalive_connections=5,
+                keepalive_expiry=120,
+            ),
+        )
+    return _vision_client
 
 
 def _parse_web_detection(response_data: dict) -> str:
@@ -351,14 +378,14 @@ async def reverse_image_search(image_base64: str) -> str:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=_VISION_TIMEOUT) as client:
-            resp = await client.post(
-                url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-            result = resp.json()
+        client = _get_vision_client()
+        resp = await client.post(
+            url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        result = resp.json()
 
         return _parse_web_detection(result)
 

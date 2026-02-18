@@ -1,4 +1,8 @@
-"""Client assíncrono para a WhatsApp Business Cloud API."""
+"""Client assíncrono para a WhatsApp Business Cloud API.
+
+Usa httpx.AsyncClient singleton com connection pool para evitar
+overhead de TCP/TLS handshake em cada request.
+"""
 
 import asyncio
 import base64
@@ -11,9 +15,35 @@ import config
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(60.0, connect=10.0)
-_MAX_TEXT_LENGTH = 4096  # Limite da WhatsApp Cloud API
+_MAX_TEXT_LENGTH = 4096
 _MAX_RETRIES = 3
-_RETRY_DELAYS = [1, 2, 4]  # segundos
+_RETRY_DELAYS = [1, 2, 4]
+
+# Client singleton com connection pool — reutiliza conexões TCP/TLS
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Retorna client singleton, criando se necessário."""
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=_TIMEOUT,
+            limits=httpx.Limits(
+                max_connections=50,
+                max_keepalive_connections=20,
+                keepalive_expiry=120,
+            ),
+        )
+    return _client
+
+
+async def close_client() -> None:
+    """Fecha o client HTTP (chamado no shutdown do app)."""
+    global _client
+    if _client and not _client.is_closed:
+        await _client.aclose()
+        _client = None
 
 
 def _messages_url() -> str:
@@ -63,10 +93,10 @@ def _split_text(text: str, max_len: int = _MAX_TEXT_LENGTH) -> list[str]:
 async def _request_with_retry(
     method: str,
     url: str,
-    client: httpx.AsyncClient,
     **kwargs,
 ) -> httpx.Response:
     """Executa request HTTP com retry para erros transientes."""
+    client = _get_client()
     last_exc: Exception | None = None
 
     for attempt in range(_MAX_RETRIES):
@@ -124,20 +154,19 @@ async def send_text(
     chunks = _split_text(text)
     last_result = {}
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        for i, chunk in enumerate(chunks):
-            body: dict = {
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": remote_jid,
-                "type": "text",
-                "text": {"body": chunk},
-            }
-            if quoted_message_id and i == 0:
-                body["context"] = {"message_id": quoted_message_id}
+    for i, chunk in enumerate(chunks):
+        body: dict = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": remote_jid,
+            "type": "text",
+            "text": {"body": chunk},
+        }
+        if quoted_message_id and i == 0:
+            body["context"] = {"message_id": quoted_message_id}
 
-            resp = await _request_with_retry("POST", _messages_url(), client, json=body, headers=_headers())
-            last_result = resp.json()
+        resp = await _request_with_retry("POST", _messages_url(), json=body, headers=_headers())
+        last_result = resp.json()
 
     return last_result
 
@@ -154,9 +183,8 @@ async def upload_media(
     files = {"file": (filename, media_bytes, mime_type)}
     data = {"messaging_product": "whatsapp", "type": mime_type}
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await _request_with_retry("POST", url, client, headers=headers, files=files, data=data)
-        return resp.json().get("id", "")
+    resp = await _request_with_retry("POST", url, headers=headers, files=files, data=data)
+    return resp.json().get("id", "")
 
 
 # ── Enviar Áudio ──
@@ -172,9 +200,8 @@ async def send_audio(remote_jid: str, audio_bytes: bytes) -> dict:
         "type": "audio",
         "audio": {"id": media_id},
     }
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await _request_with_retry("POST", _messages_url(), client, json=body, headers=_headers())
-        return resp.json()
+    resp = await _request_with_retry("POST", _messages_url(), json=body, headers=_headers())
+    return resp.json()
 
 
 # ── Marcar como Lida ──
@@ -186,8 +213,7 @@ async def mark_as_read(message_id: str) -> None:
         "message_id": message_id,
     }
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            await _request_with_retry("POST", _messages_url(), client, json=body, headers=_headers())
+        await _request_with_retry("POST", _messages_url(), json=body, headers=_headers())
     except Exception:
         logger.warning("Falha ao marcar mensagem como lida: %s", message_id)
 
@@ -197,15 +223,14 @@ async def mark_as_read(message_id: str) -> None:
 async def download_media(media_id: str) -> bytes:
     auth_header = {"Authorization": f"Bearer {config.WHATSAPP_ACCESS_TOKEN}"}
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await _request_with_retry("GET", _media_url(media_id), client, headers=auth_header)
-        download_url = resp.json().get("url", "")
+    resp = await _request_with_retry("GET", _media_url(media_id), headers=auth_header)
+    download_url = resp.json().get("url", "")
 
-        if not download_url:
-            raise ValueError(f"URL de download não encontrada para media_id={media_id}")
+    if not download_url:
+        raise ValueError(f"URL de download não encontrada para media_id={media_id}")
 
-        resp = await _request_with_retry("GET", download_url, client, headers=auth_header)
-        return resp.content
+    resp = await _request_with_retry("GET", download_url, headers=auth_header)
+    return resp.content
 
 
 async def download_media_as_base64(media_id: str) -> str:
