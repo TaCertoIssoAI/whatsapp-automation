@@ -99,6 +99,9 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
             "Isso pode levar de 10 segundos a 1 minuto.",
             quoted_message_id=msg_id,
         )
+        # Reativar typing indicator após enviar msg de status (enviar msg cancela o typing)
+        if msg_id:
+            await whatsapp_api.send_typing_indicator(msg_id)
     except Exception:
         pass  # Status message is not critical
 
@@ -152,6 +155,9 @@ async def process_text(state: WorkflowState) -> WorkflowState:
             "Isso pode levar de 10 segundos a 1 minuto.",
             quoted_message_id=msg_id,
         )
+        # Reativar typing indicator após enviar msg de status
+        if msg_id:
+            await whatsapp_api.send_typing_indicator(msg_id)
     except Exception:
         pass
 
@@ -186,6 +192,9 @@ async def process_image(state: WorkflowState) -> WorkflowState:
             "Isso pode levar de 10 segundos a 1 minuto.",
             quoted_message_id=msg_id,
         )
+        # Reativar typing indicator após enviar msg de status
+        if msg_id:
+            await whatsapp_api.send_typing_indicator(msg_id)
     except Exception:
         pass
 
@@ -254,6 +263,9 @@ async def process_video(state: WorkflowState) -> WorkflowState:
             "Isso pode levar de 10 segundos a 1 minuto.",
             quoted_message_id=msg_id,
         )
+        # Reativar typing indicator após enviar msg de status
+        if msg_id:
+            await whatsapp_api.send_typing_indicator(msg_id)
     except Exception:
         pass
 

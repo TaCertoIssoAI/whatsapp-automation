@@ -457,13 +457,22 @@ class WebhookInterceptASGI:
 
     Opera direto no protocolo ASGI (receive/send), sem nenhuma abstração
     de framework. Isso é o mais rápido possível em Python ASGI.
+
+    IMPORTANTE: Delega lifespan e todas as outras rotas ao FastAPI
+    normalmente, para que startup/shutdown (queue, workers, etc.) funcionem.
     """
 
     def __init__(self, fastapi_app: FastAPI) -> None:
         self._app = fastapi_app
 
     async def __call__(self, scope, receive, send) -> None:
-        # Só intercepta HTTP — websockets etc vão pro FastAPI
+        # Lifespan (startup/shutdown) DEVE ir pro FastAPI — sem isso
+        # a fila, workers e workflow NÃO são inicializados!
+        if scope["type"] == "lifespan":
+            await self._app(scope, receive, send)
+            return
+
+        # Só intercepta HTTP
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
