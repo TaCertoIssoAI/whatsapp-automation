@@ -102,8 +102,6 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
     except Exception:
         pass  # Status message is not critical
 
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
-
     try:
         audio_b64 = await whatsapp_api.download_media_as_base64(media_id)
     except Exception:
@@ -157,8 +155,6 @@ async def process_text(state: WorkflowState) -> WorkflowState:
     except Exception:
         pass
 
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
-
     try:
         result = await fact_checker.check_text(
             state.get("endpoint_api", ""),
@@ -192,8 +188,6 @@ async def process_image(state: WorkflowState) -> WorkflowState:
         )
     except Exception:
         pass
-
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
 
     try:
         image_b64 = await whatsapp_api.download_media_as_base64(media_id)
@@ -262,8 +256,6 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         )
     except Exception:
         pass
-
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
 
     try:
         video_b64 = await whatsapp_api.download_media_as_base64(media_id)

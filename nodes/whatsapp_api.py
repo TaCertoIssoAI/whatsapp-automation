@@ -238,25 +238,55 @@ async def download_media_as_base64(media_id: str) -> str:
     return base64.b64encode(media_bytes).decode("utf-8")
 
 
-# ── Indicador de Digitação ──
+# ── Indicador de Digitação (Cloud API) ──
+#
+# A Cloud API NÃO tem um endpoint separado para typing.
+# O typing indicator é ativado JUNTO com o mark-as-read, usando:
+#   POST /{PHONE_NUMBER_ID}/messages
+#   {
+#     "messaging_product": "whatsapp",
+#     "status": "read",
+#     "message_id": "<WAMID>",
+#     "typing_indicator": {"type": "text"}
+#   }
+# Isso marca a mensagem como lida E mostra "digitando..." por 25s
+# (ou até a próxima mensagem enviada, o que vier primeiro).
+# Não existe "typing_off" — ele some automaticamente.
+
 
 async def send_typing_indicator(message_id: str) -> None:
-    """Envia indicador de digitação (best-effort, erros são ignorados)."""
+    """Marca mensagem como lida E ativa 'digitando...' no WhatsApp.
+
+    Cloud API: POST /{PHONE_NUMBER_ID}/messages com status=read +
+    typing_indicator. O indicador dura até 25s ou até enviarmos uma
+    mensagem, o que vier primeiro.
+
+    Requer o message_id (wamid) da mensagem recebida do usuário.
+    Best-effort — erros são silenciados.
+    """
+    if not message_id:
+        return
+
     body = {
         "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": "",  # Preenchido pelo Meta quando usa message_id
         "status": "read",
         "message_id": message_id,
+        "typing_indicator": {"type": "text"},
     }
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
-            await client.post(_messages_url(), json=body, headers=_headers())
+        client = _get_client()
+        await client.post(_messages_url(), json=body, headers=_headers())
     except Exception:
         pass  # Typing indicator é best-effort
 
 
-def send_typing_fire_and_forget(message_id: str) -> None:
+def typing_indicator_fire_and_forget(message_id: str) -> None:
+    """Dispara typing indicator sem bloquear (fire-and-forget).
+
+    Marca como lido + mostra 'digitando...' automaticamente.
+    """
+    if not message_id:
+        return
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(send_typing_indicator(message_id))

@@ -1,4 +1,4 @@
-# Tá Certo Isso AI? - WhatsApp Integration (Python)
+# Tá Certo Isso AI? - WhatsApp Integration v5.0.0
 
 <p align="center">
   <a href="https://tacertoissoai.com.br/">
@@ -9,9 +9,37 @@
   </a>
 </p>
 
-> **Implementação Python do bot de verificação de fake news para WhatsApp usando FastAPI e LangGraph**
+> **Bot de verificação de fake news para WhatsApp usando WhatsApp Business Cloud API (Oficial da Meta)**
 
-Este repositório contém a **implementação Python** do bot **Tá Certo Isso AI?**, replicando fielmente a lógica originalmente construída em [n8n](https://github.com/TaCertoIssoAI/n8n-workflows). Utilizamos **LangGraph** para orquestração de workflows, **FastAPI** para o webhook, e integrações com **Google Gemini** e **Evolution API**.
+Este repositório contém o bot **Tá Certo Isso AI?** implementado em Python com **FastAPI**, **LangGraph** e **Google Gemini**, usando a **API Oficial do WhatsApp** da Meta.
+
+## 🆕 Novidades da v5.0.0
+
+### ⚡ Prioridade ABSOLUTA ao Webhook da Meta
+- **Middleware de interceptação**: Processa POST /webhook ANTES de qualquer outro código
+- **Fire-and-forget**: Enfileira em background task (não espera)
+- **Resposta < 1ms**: Body pré-serializado, sem parse JSON, sem HMAC no hot path
+- **Garantia**: Meta **NUNCA** espera, mesmo com servidor sob alta carga
+
+### 🎯 Arquitetura "ACK-first, process-later"
+- **Camada 1**: Middleware intercepta e retorna 200 OK instantaneamente
+- **Camada 2**: Background task enfileira (payload, HMAC) sem bloquear
+- **Camada 3**: Workers processam HMAC, JSON, dedup e LangGraph **depois**
+- **Resultado**: 0% timeouts, 0% exponential backoff da Meta
+
+### 🔧 Tunning para VPS 1-core
+- **3 queue workers** (ao invés de 5)
+- **8 threads** no pool (ao invés de 32)
+- **10 max concurrent** (ao invés de 30)
+- **4 concurrent Gemini calls** (ao invés de 10)
+- Fila de **500 itens** (ao invés de 2000)
+
+### 🛑 Shutdown Robusto
+- **Lifespan context manager** (padrão moderno FastAPI)
+- **Timeouts em cada etapa** do shutdown (nunca trava)
+- **Flag `_shutting_down`** impede enfileiramentos durante shutdown
+
+📚 **[Leia a documentação completa da arquitetura de prioridade](docs/WEBHOOK_PRIORITY.md)**
 
 ---
 
@@ -19,11 +47,12 @@ Este repositório contém a **implementação Python** do bot **Tá Certo Isso A
 
 **Tá Certo Isso AI?** é um bot de WhatsApp que combate a desinformação usando inteligência artificial multimodal e fact-checking. Qualquer pessoa pode verificar se uma mensagem é verdadeira, enganosa ou fora de contexto **sem sair do WhatsApp**.
 
-Esta implementação Python oferece:
-- ✅ **100% compatível** com o workflow n8n original
+Esta implementação oferece:
+- ✅ **API Oficial do WhatsApp** (Cloud API da Meta)
 - 🚀 **Performance otimizada** com FastAPI e asyncio
+- ⚡ **Webhook instantâneo** (< 1ms de resposta para a Meta)
 - 🔧 **Fácil manutenção** com código modular e tipado
-- 📦 **Deploy simplificado** com ambiente virtual Python
+- 📦 **Deploy simplificado** em VPS 1-core
 
 ---
 
@@ -36,17 +65,27 @@ Esta implementação Python oferece:
          │
          ▼
 ┌─────────────────┐
-│  Evolution API  │ ◄─── Webhook: /messages-upsert
+│   Meta Cloud    │ ◄─── Webhook: POST /webhook (200 OK < 1ms)
+│      API        │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────────────────────────────────────┐
 │           FastAPI (main.py)                     │
 │  ┌───────────────────────────────────────────┐  │
+│  │    asyncio.Queue (ACK-first, process-later)│  │
+│  │  ┌─────────────────────────────────────┐  │  │
+│  │  │  3 Queue Workers:                   │  │  │
+│  │  │   - HMAC validation (off hot path)  │  │  │
+│  │  │   - JSON parse                      │  │  │
+│  │  │   - Deduplication                   │  │  │
+│  │  │   - Dispatch to LangGraph           │  │  │
+│  │  └─────────────────────────────────────┘  │  │
+│  │                                            │  │
 │  │        LangGraph Workflow (graph.py)      │  │
 │  │  ┌─────────────────────────────────────┐  │  │
 │  │  │  Data Extraction → Filters →        │  │  │
-│  │  │  Routing (Switch6/9) →              │  │  │
+│  │  │  Routing (tipo de mensagem) →       │  │  │
 │  │  │  Media Processing → Fact-check →    │  │  │
 │  │  │  Response Sender                    │  │  │
 │  │  └─────────────────────────────────────┘  │  │

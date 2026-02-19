@@ -21,8 +21,8 @@ _GEMINI_CALL_TIMEOUT = 120  # 2 minutos por tentativa
 
 # Semáforo que limita quantas chamadas Gemini rodam em paralelo.
 # Gemini tem rate limits e cada chamada consome uma thread do pool.
-# Sem isso, 50 mensagens simultâneas = 50 chamadas Gemini = pool saturado.
-_GEMINI_SEMAPHORE = asyncio.Semaphore(10)
+# Em VPS de 1 core, limitar a 4 para não saturar CPU e thread pool.
+_GEMINI_SEMAPHORE = asyncio.Semaphore(4)
 
 
 async def _retry_async(func, *args, label: str = ""):

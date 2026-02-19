@@ -31,8 +31,6 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
             logger.exception("Falha ao enviar mensagem de fallback para %s", remote_jid)
         return {}  # type: ignore[return-value]
 
-    whatsapp_api.send_typing_fire_and_forget(msg_id)
-
     try:
         await whatsapp_api.send_text(remote_jid, rationale, quoted_message_id=msg_id)
     except Exception:
@@ -45,7 +43,6 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
             )
         except Exception:
             pass
-
     return {}  # type: ignore[return-value]
 
 
@@ -60,7 +57,9 @@ async def send_audio_response(state: WorkflowState) -> WorkflowState:
 
     try:
         await whatsapp_api.send_text(remote_jid, "🗣️🎤 Estou gravando o áudio da resposta...")
-        whatsapp_api.send_typing_fire_and_forget(msg_id)
+        # Reativar typing indicator para a gravação do áudio
+        if msg_id:
+            await whatsapp_api.send_typing_indicator(msg_id)
         audio_bytes = await ai_services.generate_tts(response_text)
         await whatsapp_api.send_audio(remote_jid, audio_bytes)
     except Exception:

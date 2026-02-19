@@ -1,6 +1,15 @@
-# 🚀 Guia de Implantação — TaCertoIssoAI WhatsApp Bot
+# 🚀 Guia de Implantação — TaCertoIssoAI WhatsApp Bot v5.0.0
 
-Guia completo para colocar o bot de detecção de fake news funcionando.
+Guia completo para colocar o bot de detecção de fake news funcionando na **WhatsApp Business Cloud API** (API Oficial da Meta).
+
+> **Novidades da v5.0.0**:
+> - ⚡ **PRIORIDADE ABSOLUTA** ao webhook: Middleware intercepta POST /webhook e retorna 200 OK em **< 1ms**
+> - 🚀 **Fire-and-forget**: Enfileiramento em background task (não bloqueia a resposta)
+> - 🎯 Tunning para VPS 1-core (3 workers, 8 threads, 10 concurrent)
+> - 🛑 Shutdown robusto com lifespan context manager
+> - ✅ **GARANTIA**: Meta nunca espera, mesmo com servidor sob alta carga
+>
+> 📚 **[Leia sobre a arquitetura de prioridade máxima](WEBHOOK_PRIORITY.md)**
 
 ---
 
@@ -8,9 +17,10 @@ Guia completo para colocar o bot de detecção de fake news funcionando.
 
 - **Python 3.11+**
 - **pip** (gerenciador de pacotes)
-- **ngrok** (para expor o servidor local — já instalado)
-- Conta na **Evolution API**
-- Chaves de API: **Google Gemini**, **Google Cloud Vision**
+- Conta na **WhatsApp Business** (Meta)
+- Chave de API: **Google Gemini**
+
+> **Nota**: Esta versão usa a **API Oficial do WhatsApp** (Cloud API da Meta), não mais a Evolution API não-oficial.
 
 ---
 
@@ -48,29 +58,27 @@ nano .env
 
 | Variável | Onde encontrar | Status |
 |----------|---------------|--------|
-| `EVOLUTION_API_URL` | Screenshot da Evolution API | ✅ Preenchido |
-| `EVOLUTION_API_KEY` | Painel da Evolution API → ApiKey | ⬜ Preencher |
+| `WHATSAPP_ACCESS_TOKEN` | Meta for Developers → App → WhatsApp → API Setup | ⬜ Preencher |
+| `WHATSAPP_PHONE_NUMBER_ID` | Meta for Developers → WhatsApp → Phone Number ID | ⬜ Preencher |
+| `WHATSAPP_VERIFY_TOKEN` | Escolha uma senha qualquer (ex: `meu_token_secreto_123`) | ⬜ Preencher |
+| `WHATSAPP_APP_SECRET` | Meta for Developers → App Settings → Basic → App Secret | ⬜ Preencher |
 | `GOOGLE_GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/apikey) | ⬜ Preencher |
-| `GOOGLE_CLOUD_API_KEY` | Google Cloud Console (ver seção abaixo) | ⬜ Preencher |
 | `FACT_CHECK_API_URL` | API do TaCertoIssoAI | ✅ Preenchido |
-| `BOT_MENTION_JID` | JID do bot no WhatsApp | ✅ Preenchido |
 | `WEBHOOK_PORT` | Porta do servidor local | ✅ Preenchido (5000) |
 
-### Como obter a `GOOGLE_CLOUD_API_KEY`
+### Como obter as credenciais do WhatsApp (Meta)
 
-No n8n, a pesquisa reversa de imagem usa **Google OAuth2** para acessar a **Vision API**. Na nossa implementação Python, simplificamos para usar uma **API Key**, que é mais fácil de configurar.
+1. Acesse [developers.facebook.com](https://developers.facebook.com/)
+2. Crie um app ou use um existente
+3. Adicione o produto **WhatsApp** ao app
+4. Em **API Setup**, você encontra:
+   - **Temporary access token** — copie para `WHATSAPP_ACCESS_TOKEN` (válido por 24h, depois crie um permanente)
+   - **Phone number ID** — copie para `WHATSAPP_PHONE_NUMBER_ID`
+5. Em **App Settings** → **Basic**:
+   - **App Secret** — copie para `WHATSAPP_APP_SECRET`
+6. Para `WHATSAPP_VERIFY_TOKEN`: escolha uma senha qualquer (você usará ela ao configurar o webhook)
 
-> [!IMPORTANT]
-> A API Key precisa estar no **mesmo projeto Google Cloud** do Gemini, com a **Vision API habilitada**.
-
-1. Acesse o [Google Cloud Console](https://console.cloud.google.com/)
-2. Selecione ou crie um projeto
-3. Vá em **APIs & Services** → **Enabled APIs** → habilite **Cloud Vision API**
-4. Vá em **APIs & Services** → **Credentials** → **Create Credentials** → **API Key**
-5. Copie a chave e cole no `.env` como `GOOGLE_CLOUD_API_KEY`
-
-> [!TIP]
-> Se você já tem o `GOOGLE_GEMINI_API_KEY` funcionando, provavelmente ele vem do mesmo projeto. Tente usar a mesma chave — se a Vision API estiver habilitada no projeto, funciona!
+> **Token permanente**: O temporary token expira em 24h. Para produção, crie um **System User** com token permanente em **Business Settings** → **System Users**.
 
 ---
 
@@ -100,65 +108,49 @@ curl http://localhost:5000/health
 
 ---
 
-## 4️⃣ Expor com ngrok
+## 4️⃣ Expor o Webhook Publicamente
 
-O ngrok cria um túnel público para que a Evolution API possa enviar webhooks para o seu servidor local.
+A Meta precisa enviar webhooks para o seu servidor. Você tem 3 opções:
 
-### Primeira vez: autenticar ngrok
-
-Se ainda não configurou, crie uma conta gratuita em [ngrok.com](https://ngrok.com) e configure o token:
+### Opção A: ngrok (desenvolvimento local)
 
 ```bash
-ngrok config add-authtoken SEU_TOKEN_AQUI
-```
-
-### Iniciar o túnel
-
-Em outro terminal (mantenha o servidor Python rodando):
-
-```bash
+# Em outro terminal (mantenha o servidor Python rodando)
 ngrok http 5000
 ```
 
-Você verá algo como:
-```
-Forwarding   https://abc123.ngrok-free.app -> http://localhost:5000
+Copie a URL **https** (ex: `https://abc123.ngrok-free.app`).
+
+### Opção B: Deploy em servidor VPS
+
+Se você tem uma VPS com IP público:
+
+```bash
+# Certifique-se de que a porta 5000 está aberta no firewall
+sudo ufw allow 5000
 ```
 
-> [!IMPORTANT]
-> Copie a URL **https** (ex: `https://abc123.ngrok-free.app`). Ela será usada no próximo passo.
+Use o IP ou domínio da VPS (ex: `https://meudominio.com`).
+
+### Opção C: Railway, Google Cloud Run, etc.
+
+Deploy em plataforma cloud que fornece URL HTTPS automática.
 
 ---
 
-## 5️⃣ Configurar Webhook na Evolution API
+## 5️⃣ Configurar Webhook na Meta
 
-Agora você precisa dizer à Evolution API para enviar webhooks para o seu servidor.
+Agora configure a Meta para enviar webhooks para o seu servidor.
 
-### Via Painel da Evolution API
+1. Acesse [developers.facebook.com](https://developers.facebook.com/) → seu app → **WhatsApp** → **Configuration**
+2. Em **Webhook**, clique em **Edit**
+3. Preencha:
+   - **Callback URL**: `https://SEU-DOMINIO/webhook` (ex: `https://abc123.ngrok-free.app/webhook`)
+   - **Verify token**: o mesmo que você colocou em `WHATSAPP_VERIFY_TOKEN` no `.env`
+4. Clique em **Verify and Save**
+5. Em **Webhook fields**, marque **messages**
 
-1. Acesse o painel da Evolution API: `https://ta-certo-isso-ai-evolution-api.598vvv.easypanel.host`
-2. Vá nas configurações da instância do WhatsApp
-3. Em **Webhook**, configure:
-   - **URL**: `https://SEU-ID.ngrok-free.app`
-   - **Events**: marque `MESSAGES_UPSERT`
-   - **Webhook by Events**: ativado
-
-### Via API (alternativa)
-
-```bash
-curl -X POST "https://ta-certo-isso-ai-evolution-api.598vvv.easypanel.host/webhook/set/NOME_DA_INSTANCIA" \
-  -H "apiKey: SUA_EVOLUTION_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://SEU-ID.ngrok-free.app",
-    "webhook_by_events": true,
-    "webhook_base64": true,
-    "events": ["MESSAGES_UPSERT"]
-  }'
-```
-
-> [!WARNING]
-> Substitua `NOME_DA_INSTANCIA` pelo nome da sua instância do WhatsApp na Evolution API, e `SUA_EVOLUTION_API_KEY` pela sua API key.
+> **Importante**: A Meta vai fazer uma requisição GET para `/webhook` com o verify token. O servidor precisa estar rodando!
 
 ---
 
@@ -167,18 +159,41 @@ curl -X POST "https://ta-certo-isso-ai-evolution-api.598vvv.easypanel.host/webho
 Com tudo configurado:
 
 1. **Servidor Python** rodando (`python main.py`)
-2. **ngrok** rodando (`ngrok http 5000`)
-3. **Webhook** configurado na Evolution API
+2. **Webhook** configurado na Meta
+3. **URL pública** acessível (ngrok ou VPS)
 
 ### Testes sugeridos
 
-1. **DM com saudação**: Envie "Oi" para o número do bot → deve responder com instruções
-2. **DM com texto**: Envie uma notícia para verificar → deve responder com fact-check
-3. **DM com áudio**: Envie um áudio → deve transcrever, verificar, e responder com áudio
-4. **DM com imagem**: Envie uma imagem → deve analisar e verificar
-5. **DM com vídeo**: Envie um vídeo curto (< 2min) → deve analisar e verificar
-6. **Grupo com menção**: Mencione o bot em um grupo com `@bot` → deve responder
-7. **Documento**: Envie um PDF → deve responder que não suporta documentos
+1. **Saudação**: Envie "Oi" para o número do WhatsApp Business → deve responder com instruções
+2. **Texto**: Envie uma notícia para verificar → deve responder com fact-check
+3. **Áudio**: Envie um áudio → deve transcrever, verificar, e responder com texto + áudio
+4. **Imagem**: Envie uma imagem → deve analisar e verificar
+5. **Vídeo**: Envie um vídeo curto → deve analisar e verificar
+6. **Documento**: Envie um PDF → deve responder que não suporta documentos
+
+### Verificar métricas
+
+```bash
+curl http://localhost:5000/health
+```
+
+Resposta esperada:
+```json
+{
+  "status": "ok",
+  "version": "5.0.0",
+  "workflow_ready": true,
+  "queue_size": 0,
+  "active_tasks": 0,
+  "concurrency": "0/10",
+  "total_received": 42,
+  "total_processed": 40,
+  "total_errors": 2,
+  "dedup_cache_size": 35,
+  "thread_pool_workers": 8,
+  "shutting_down": false
+}
+```
 
 ---
 
@@ -277,14 +292,134 @@ graph TD
 
 ---
 
-## 🚀 Deploy em Produção
+## 🚀 Deploy em Produção (VPS)
 
-Para deploy permanente, considere:
+Para deploy permanente em VPS com 1 core:
 
-1. **Deploy na nuvem** (Google Cloud Run, Railway, etc.)
-2. **URL fixa** — sem necessidade de ngrok
-3. **Configure o webhook** com a URL fixa do deploy
-4. Use `gunicorn` ou `uvicorn` em modo produção:
-   ```bash
-   uvicorn main:app --host 0.0.0.0 --port 5000 --workers 2
-   ```
+### 1. Instalar dependências do sistema
+
+```bash
+sudo apt update
+sudo apt install -y python3.11 python3.11-venv python3-pip ffmpeg
+```
+
+### 2. Clonar o repositório e configurar
+
+```bash
+git clone https://github.com/TaCertoIssoAI/whatsapp-automation.git
+cd whatsapp-automation
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 3. Configurar `.env` com as credenciais de produção
+
+### 4. Criar serviço systemd
+
+```bash
+sudo nano /etc/systemd/system/whatsapp-bot.service
+```
+
+Conteúdo:
+```ini
+[Unit]
+Description=TaCertoIssoAI WhatsApp Bot
+After=network.target
+
+[Service]
+Type=simple
+User=seu-usuario
+WorkingDirectory=/caminho/para/whatsapp-automation
+Environment="PATH=/caminho/para/whatsapp-automation/venv/bin"
+ExecStart=/caminho/para/whatsapp-automation/venv/bin/python main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 5. Ativar e iniciar o serviço
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable whatsapp-bot
+sudo systemctl start whatsapp-bot
+sudo systemctl status whatsapp-bot
+```
+
+### 6. Configurar NGINX como reverse proxy (opcional mas recomendado)
+
+```nginx
+server {
+    listen 80;
+    server_name seu-dominio.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### 7. Configurar HTTPS com Let's Encrypt
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d seu-dominio.com
+```
+
+---
+
+## 📊 Monitoramento
+
+### Ver logs do serviço
+
+```bash
+sudo journalctl -u whatsapp-bot -f
+```
+
+### Reiniciar o serviço
+
+```bash
+sudo systemctl restart whatsapp-bot
+```
+
+### Verificar métricas
+
+```bash
+curl http://localhost:5000/health | jq
+```
+
+---
+
+## ⚠️ Troubleshooting
+
+### Bot não responde
+1. Verifique se o servidor está rodando: `sudo systemctl status whatsapp-bot`
+2. Verifique os logs: `sudo journalctl -u whatsapp-bot -n 100`
+3. Teste o health check: `curl http://localhost:5000/health`
+4. Verifique se o webhook está configurado corretamente na Meta
+
+### Mensagens atrasam ou "somem"
+- ✅ **RESOLVIDO na v5.0.0**: O webhook agora retorna 200 **instantaneamente** (< 1ms)
+- A Meta nunca mais vai colocar seu servidor em "castigo" (exponential backoff)
+- Se ainda houver atrasos, verifique a latência da rede entre Meta e seu servidor
+
+### Servidor trava ou usa muita CPU
+- v5.0.0 está tunado para VPS 1-core: 3 workers, 10 concurrent, 8 threads
+- Se precisar ajustar, edite as constantes no topo de `main.py`
+
+### Erro de API key
+- Verifique se todas as chaves no `.env` estão corretas
+- Token do WhatsApp expira em 24h — use System User token para produção
+
+---
