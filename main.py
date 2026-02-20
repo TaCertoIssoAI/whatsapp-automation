@@ -161,14 +161,32 @@ async def _process_message(body: dict, message_id: str, sender: str) -> None:
             _MAX_CONCURRENT - _concurrency_sem._value, _MAX_CONCURRENT,
         )
 
-        # ── TYPING INDICATOR + MARK AS READ imediato ──
-        # Mostra "digitando..." e marca como lida assim que entra em processamento
-        if message_id:
-            try:
-                from nodes import whatsapp_api
+        # ── TYPING KEEP-ALIVE ──
+        # O typing indicator dura 25s na Cloud API. Para processamentos mais
+        # longos (ex: vídeo, fact-check lento) criamos uma task paralela que
+        # renova o indicador a cada 20s até o processamento terminar.
+        # Roda em paralelo — não bloqueia nem atrasa o fluxo principal.
+        _typing_stop = asyncio.Event()
+
+        async def _typing_keepalive() -> None:
+            if not message_id:
+                return
+            from nodes import whatsapp_api
+            # Renovação imediata ao entrar no semáforo (pode ter ficado na fila)
+            with suppress(Exception):
                 await whatsapp_api.send_typing_indicator(message_id)
-            except Exception:
-                pass  # typing é best-effort
+            while not _typing_stop.is_set():
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(asyncio.ensure_future(_typing_stop.wait())),
+                        timeout=20,
+                    )
+                except asyncio.TimeoutError:
+                    if not _typing_stop.is_set():
+                        with suppress(Exception):
+                            await whatsapp_api.send_typing_indicator(message_id)
+
+        typing_task = asyncio.create_task(_typing_keepalive(), name=f"typing-{message_id[-12:]}")
 
         try:
             initial_state = {
@@ -207,6 +225,12 @@ async def _process_message(body: dict, message_id: str, sender: str) -> None:
                         "⚠️ Ocorreu um erro inesperado. "
                         "Por favor, tente enviar novamente.",
                     )
+        finally:
+            # Para o keep-alive de typing em qualquer caso (sucesso, erro ou timeout)
+            _typing_stop.set()
+            typing_task.cancel()
+            with suppress(Exception):
+                await typing_task
 
 
 def _task_done_callback(task: asyncio.Task) -> None:
@@ -298,6 +322,13 @@ async def _queue_worker(worker_id: int) -> None:
                                         body, entry_idx, change_idx, msg_idx,
                                     )
 
+                                    # Typing indicator imediato — dispara ANTES do
+                                    # semáforo de concorrência para que o usuário veja
+                                    # "digitando..." mesmo enquanto aguarda na fila.
+                                    if msg_id:
+                                        from nodes import whatsapp_api
+                                        whatsapp_api.typing_indicator_fire_and_forget(msg_id)
+
                                     task = asyncio.create_task(
                                         _process_message(
                                             isolated_body, msg_id, sender,
@@ -386,6 +417,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.error("VARS FALTANDO: %s", ", ".join(missing))
     else:
         logger.info("Config OK")
+
+    # Validar config do rate limiting (avisos, não bloqueia startup)
+    if config.FIREBASE_CREDENTIALS_PATH:
+        if not config.HASH_SALT:
+            logger.warning("HASH_SALT não configurado — rate limiting pode ficar inseguro")
+        logger.info(
+            "Rate limiting: ATIVO (limite=%d msgs/dia, credentials=%s)",
+            config.DAILY_MESSAGE_LIMIT,
+            config.FIREBASE_CREDENTIALS_PATH,
+        )
+    else:
+        logger.warning("Rate limiting: DESATIVADO (FIREBASE_CREDENTIALS_PATH não configurado)")
 
     if config.WHATSAPP_APP_SECRET:
         logger.info("Assinatura HMAC: ATIVA")

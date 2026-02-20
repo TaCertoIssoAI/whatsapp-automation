@@ -37,5 +37,14 @@ FACT_CHECK_API_URL = os.getenv(
 # ──────────────────────── Bot (grupo — desativado por enquanto) ────────────────────────
 # BOT_MENTION_JID = os.getenv("BOT_MENTION_JID", "117558187450509@lid")
 
+# ──────────────────────── Firebase / Rate Limiting ────────────────────────
+# Caminho para o arquivo JSON da Service Account do Firebase.
+# No servidor (Docker/EasyPanel): montado via volume em /app/firebase-credentials.json
+# Local: caminho relativo ou absoluto (ex: ./firebase-credentials.json)
+FIREBASE_CREDENTIALS_PATH = os.getenv("FIREBASE_CREDENTIALS_PATH", "")
+
+HASH_SALT = os.getenv("HASH_SALT", "")
+DAILY_MESSAGE_LIMIT = int(os.getenv("DAILY_MESSAGE_LIMIT", "5"))
+
 # ──────────────────────── Servidor ────────────────────────
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))

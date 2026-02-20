@@ -91,7 +91,7 @@ def check_greeting(state: WorkflowState) -> WorkflowState:
 
 
 def route_greeting(state: WorkflowState) -> str:
-    """Decide a rota: se é saudação → responder instruções, senão → Switch6 (processar)."""
+    """Decide a rota: se é saudação → responder instruções, senão → processar mensagem."""
     if state.get("is_greeting"):
         return "handle_greeting"
     return "mark_as_read_direct"

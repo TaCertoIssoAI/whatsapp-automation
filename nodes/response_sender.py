@@ -43,6 +43,7 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
             )
         except Exception:
             pass
+
     return {}  # type: ignore[return-value]
 
 
@@ -79,6 +80,7 @@ async def handle_greeting(state: WorkflowState) -> WorkflowState:
     """Responde a uma saudação com instruções de uso."""
     remote_jid = state.get("numero_quem_enviou", "")
     msg_id = state.get("id_mensagem", "")
+    greeting_response = "Vc pode enviar a mensagem, imagem, vídeo, link ou áudio que quer verificar."
 
     if not remote_jid:
         return {}  # type: ignore[return-value]
@@ -87,7 +89,7 @@ async def handle_greeting(state: WorkflowState) -> WorkflowState:
     try:
         await whatsapp_api.send_text(
             remote_jid,
-            "Vc pode enviar a mensagem, imagem, vídeo, link ou áudio que quer verificar.",
+            greeting_response,
             quoted_message_id=msg_id,
         )
     except Exception:
@@ -100,6 +102,10 @@ async def handle_document_unsupported(state: WorkflowState) -> WorkflowState:
     """Responde que documentos não são suportados."""
     remote_jid = state.get("numero_quem_enviou", "")
     msg_id = state.get("id_mensagem", "")
+    unsupported_msg = (
+        "Eu não consigo analisar documentos, você pode enviar um texto, "
+        "um áudio, uma imagem ou um vídeo para eu analisar."
+    )
 
     if not remote_jid:
         return {}  # type: ignore[return-value]
@@ -107,8 +113,7 @@ async def handle_document_unsupported(state: WorkflowState) -> WorkflowState:
     try:
         await whatsapp_api.send_text(
             remote_jid,
-            "Eu não consigo analisar documentos, você pode enviar um texto, "
-            "um áudio, uma imagem ou um vídeo para eu analisar.",
+            unsupported_msg,
             quoted_message_id=msg_id,
         )
     except Exception:

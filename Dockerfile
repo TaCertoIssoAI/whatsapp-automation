@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar todo o código da aplicação
 COPY . .
 
+# Garantir que o firebase-credentials.json existe e é legível
+# (será montado como volume no docker-compose, mas copiado como fallback)
+RUN test -f firebase-credentials.json && chmod 644 firebase-credentials.json || true
+
 # Expor a porta 5000 (padrão do webhook)
 EXPOSE 5000
 

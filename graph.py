@@ -5,8 +5,14 @@ Apenas o caminho de mensagem direta (DM) está ativo.
 O caminho de grupo está comentado (migração apenas para DM).
 
 Fluxo DM:
-  extract_data → check_is_on_group → check_initial_message →
-  check_greeting → mark_as_read_direct → Switch6 → processamento → resposta
+  extract_data → save_message_count → check_rate_limit →
+    (bloqueado) END
+    (ok)        check_is_on_group → check_initial_message → check_greeting →
+      (saudação) handle_greeting → END
+      (normal)   mark_as_read_direct → Switch6 → processamento → resposta
+
+O rate limit roda ANTES de qualquer outro filtro para que saudações,
+mensagens iniciais, etc. também sejam contadas e limitadas.
 """
 
 import logging
@@ -38,6 +44,11 @@ from nodes.media_processor import (
     # process_quoted_text,
     # process_quoted_video,
 )
+from nodes.rate_limiter import (
+    check_rate_limit,
+    route_rate_limit,
+    save_message_count,
+)
 from nodes.response_sender import (
     handle_document_unsupported,
     handle_greeting,
@@ -62,9 +73,11 @@ def build_graph() -> StateGraph:
 
     # ─── Nós de extração e filtragem ───
     graph.add_node("extract_data", extract_data)
+    graph.add_node("save_message_count", save_message_count)
     graph.add_node("check_is_on_group", check_is_on_group)
     graph.add_node("check_initial_message", check_initial_message)
     graph.add_node("check_greeting", check_greeting)
+    graph.add_node("check_rate_limit", check_rate_limit)
 
     # ── Nós de grupo (comentados) ──
     # graph.add_node("is_mention_of_bot", check_is_mention_of_bot)
@@ -100,9 +113,15 @@ def build_graph() -> StateGraph:
     #  ARESTAS — Caminho DM
     # ════════════════════════════════════
 
-    # Entrada → Extrair dados → Verificar grupo
+    # Entrada → Extrair dados → Salvar contagem (TODA mensagem)
     graph.set_entry_point("extract_data")
-    graph.add_edge("extract_data", "check_is_on_group")
+    graph.add_edge("extract_data", "save_message_count")
+
+    # save_message_count → check_rate_limit (IMEDIATAMENTE após contar)
+    graph.add_edge("save_message_count", "check_rate_limit")
+
+    # check_rate_limit → (bloqueado) END | (ok) check_is_on_group
+    graph.add_conditional_edges("check_rate_limit", route_rate_limit)
 
     # isOnGroup → (grupo) END | (direto) check_initial_message
     graph.add_conditional_edges("check_is_on_group", route_is_on_group)
@@ -112,7 +131,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges("check_initial_message", route_initial_message)
     graph.add_edge("mark_as_read_initial", END)
 
-    # check_greeting → (sim) handle_greeting (END) | (não) mark_as_read_direct → Switch6
+    # check_greeting → (sim) handle_greeting (END) | (não) mark_as_read_direct
     graph.add_conditional_edges("check_greeting", route_greeting)
     graph.add_edge("handle_greeting", END)
 
