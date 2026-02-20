@@ -5,11 +5,14 @@ Apenas o caminho de mensagem direta (DM) está ativo.
 O caminho de grupo está comentado (migração apenas para DM).
 
 Fluxo DM:
-  extract_data → save_message_count → check_rate_limit →
-    (bloqueado) END
-    (ok)        check_is_on_group → check_initial_message → check_greeting →
-      (saudação) handle_greeting → END
-      (normal)   mark_as_read_direct → Switch6 → processamento → resposta
+  extract_data → save_message_count →
+    (/reset)       handle_reset_command → END
+    (novo usuário) send_welcome_message → check_rate_limit → ...
+    (normal)       check_rate_limit →
+      (bloqueado) END
+      (ok)        check_is_on_group → check_initial_message → check_greeting →
+        (saudação) handle_greeting → END
+        (normal)   mark_as_read_direct → Switch6 → processamento → resposta
 
 O rate limit roda ANTES de qualquer outro filtro para que saudações,
 mensagens iniciais, etc. também sejam contadas e limitadas.
@@ -52,9 +55,11 @@ from nodes.rate_limiter import (
 from nodes.response_sender import (
     handle_document_unsupported,
     handle_greeting,
+    handle_reset_command,
     mark_as_read_node,
     send_audio_response,
     send_rationale_text,
+    send_welcome_message,
 )
 from nodes.router import (
     route_direct_message,
@@ -74,6 +79,8 @@ def build_graph() -> StateGraph:
     # ─── Nós de extração e filtragem ───
     graph.add_node("extract_data", extract_data)
     graph.add_node("save_message_count", save_message_count)
+    graph.add_node("send_welcome_message", send_welcome_message)
+    graph.add_node("handle_reset_command", handle_reset_command)
     graph.add_node("check_is_on_group", check_is_on_group)
     graph.add_node("check_initial_message", check_initial_message)
     graph.add_node("check_greeting", check_greeting)
@@ -117,8 +124,14 @@ def build_graph() -> StateGraph:
     graph.set_entry_point("extract_data")
     graph.add_edge("extract_data", "save_message_count")
 
-    # save_message_count → check_rate_limit (IMEDIATAMENTE após contar)
-    graph.add_edge("save_message_count", "check_rate_limit")
+    # save_message_count → roteamento: reset | welcome+check | check_rate_limit
+    graph.add_conditional_edges("save_message_count", _route_after_save_count)
+
+    # send_welcome_message → check_rate_limit (continua o fluxo normalmente)
+    graph.add_edge("send_welcome_message", "check_rate_limit")
+
+    # handle_reset_command → END (não processa mais nada)
+    graph.add_edge("handle_reset_command", END)
 
     # check_rate_limit → (bloqueado) END | (ok) check_is_on_group
     graph.add_conditional_edges("check_rate_limit", route_rate_limit)
@@ -179,6 +192,21 @@ def build_graph() -> StateGraph:
     # graph.add_edge("process_quoted_video", "send_rationale_text")
 
     return graph
+
+
+def _route_after_save_count(state: WorkflowState) -> str:
+    """Rota após salvar contagem:
+    - /reset → handle_reset_command → END
+    - Usuário novo → send_welcome_message → check_rate_limit
+    - Normal → check_rate_limit
+    """
+    if state.get("is_reset_command"):
+        logger.info("[route-save-count] /reset detectado → handle_reset_command")
+        return "handle_reset_command"
+    if state.get("is_new_user"):
+        logger.info("[route-save-count] Novo usuário → send_welcome_message")
+        return "send_welcome_message"
+    return "check_rate_limit"
 
 
 def _route_after_rationale(state: WorkflowState) -> str:

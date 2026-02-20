@@ -27,6 +27,8 @@ class WorkflowState(TypedDict, total=False):
     is_initial_message: bool
     rate_limited: bool
     daily_count: int
+    is_new_user: bool
+    is_reset_command: bool
 
     # ── Flags de grupo (comentados — funcionalidade de grupo desativada) ──
     # is_mention_of_bot: bool

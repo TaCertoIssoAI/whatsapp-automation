@@ -3,9 +3,53 @@
 import logging
 
 from nodes import ai_services, whatsapp_api
+from nodes.rate_limiter import _RESET_CONFIRMATION_MESSAGE, _WELCOME_MESSAGE
 from state import WorkflowState
 
 logger = logging.getLogger(__name__)
+
+
+async def send_welcome_message(state: WorkflowState) -> WorkflowState:
+    """Envia mensagem de boas-vindas para usuários novos (primeiro uso ou totalMessageCount == 0)."""
+    remote_jid = state.get("numero_quem_enviou", "")
+    is_new_user = state.get("is_new_user", False)
+
+    if not remote_jid or not is_new_user:
+        return {}  # type: ignore[return-value]
+
+    logger.info("[welcome] Enviando mensagem de boas-vindas para %s…%s",
+                remote_jid[:4], remote_jid[-4:])
+    try:
+        await whatsapp_api.send_text(remote_jid, _WELCOME_MESSAGE)
+        logger.info("[welcome] ✅ Mensagem de boas-vindas enviada")
+    except Exception:
+        logger.exception("[welcome] Falha ao enviar mensagem de boas-vindas para %s", remote_jid)
+
+    return {}  # type: ignore[return-value]
+
+
+async def handle_reset_command(state: WorkflowState) -> WorkflowState:
+    """Responde ao comando /reset confirmando que os contadores foram zerados."""
+    remote_jid = state.get("numero_quem_enviou", "")
+    msg_id = state.get("id_mensagem", "")
+
+    if not remote_jid:
+        return {}  # type: ignore[return-value]
+
+    logger.info("[reset] Enviando confirmação de reset para %s…%s",
+                remote_jid[:4], remote_jid[-4:])
+    try:
+        await whatsapp_api.mark_as_read(msg_id)
+        await whatsapp_api.send_text(
+            remote_jid,
+            _RESET_CONFIRMATION_MESSAGE,
+            quoted_message_id=msg_id,
+        )
+        logger.info("[reset] ✅ Confirmação de reset enviada")
+    except Exception:
+        logger.exception("[reset] Falha ao enviar confirmação de reset para %s", remote_jid)
+
+    return {}  # type: ignore[return-value]
 
 
 async def send_rationale_text(state: WorkflowState) -> WorkflowState:

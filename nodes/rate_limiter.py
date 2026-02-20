@@ -32,6 +32,21 @@ _LIMIT_REACHED_MESSAGE = (
     "O serviço estará disponível novamente amanhã. Obrigado pela compreensão! 🙏"
 )
 
+_WELCOME_MESSAGE = (
+    "Olá! 👋\n"
+    "Obrigado por usar nossa ferramenta de verificação de informações.\n"
+    "Antes de começarmos, informamos que ao continuar você concorda com nossos "
+    "Termos e Condições e Política de Privacidade:\n"
+    "tacertoissoai.com.br/termos-e-privacidade\n\n"
+    "Saiba mais na nossa plataforma online:\n"
+    "https://tacertoissoai.com.br\n\n"
+    "Siga a gente no Instagram: https://www.instagram.com/tacertoisso.ai"
+)
+
+_RESET_CONFIRMATION_MESSAGE = (
+    "✅ Seus contadores foram resetados com sucesso."
+)
+
 # ── Fallback in-memory (quando Firestore não está disponível) ──
 # { phone_hash: {"date": "YYYY-MM-DD", "count": int} }
 _memory_counts: dict[str, dict] = {}
@@ -151,22 +166,27 @@ async def save_message_count(state: WorkflowState) -> WorkflowState:
     """Contabiliza a mensagem. Roda para TODA mensagem recebida.
 
     Retorna daily_count no state para check_rate_limit usar.
+    Também retorna is_new_user (True se o usuário é novo ou totalMessageCount == 0).
+    Também detecta /reset e zera os contadores — /reset SEMPRE funciona, mesmo
+    quando o limite diário foi atingido, pois o roteamento desvia antes do check_rate_limit.
     Se Firestore indisponível, usa fallback in-memory.
-    NUNCA retorna daily_count=0 (que causaria bypass do rate limit).
     """
     phone = state.get("numero_quem_enviou", "")
+    mensagem = state.get("mensagem", "").strip()
     limit = config.DAILY_MESSAGE_LIMIT
+    is_reset = mensagem.lower() == "/reset"
 
     if not phone:
         logger.warning("[save-count] Sem número de telefone — liberando")
-        return {"daily_count": 0}
+        return {"daily_count": 0, "is_new_user": False, "is_reset_command": False}
 
     phone_hash = _hash_phone(phone)
     doc_id = phone_hash[:12]  # para logs
     today = _today()
 
     logger.info("[save-count] ══════ INÍCIO ══════")
-    logger.info("[save-count] phone_hash=%s…, today=%s, limit=%d", doc_id, today, limit)
+    logger.info("[save-count] phone_hash=%s…, today=%s, limit=%d, is_reset=%s",
+                doc_id, today, limit, is_reset)
 
     # Tentar Firestore primeiro
     db = None
@@ -182,17 +202,21 @@ async def save_message_count(state: WorkflowState) -> WorkflowState:
         logger.error("[save-count] Erro ao obter Firestore: %s", e)
 
     if db is not None:
-        return await _save_to_firestore(db, phone_hash, doc_id, today, limit)
+        return await _save_to_firestore(db, phone_hash, doc_id, today, limit, is_reset)
 
     # Fallback in-memory
     logger.warning("[save-count] ⚠️ Firestore INDISPONÍVEL — usando fallback in-memory")
+    if is_reset:
+        _memory_counts.pop(phone_hash, None)
+        logger.info("[save-count] IN-MEMORY RESET: %s…", doc_id)
+        return {"daily_count": 0, "is_new_user": False, "is_reset_command": True}
     count = _memory_increment(phone_hash)
     logger.info("[save-count] IN-MEMORY: %s… → %d/%d", doc_id, count, limit)
-    return {"daily_count": count}
+    return {"daily_count": count, "is_new_user": False, "is_reset_command": False}
 
 
 async def _save_to_firestore(db, phone_hash: str, doc_id: str,
-                              today: str, limit: int) -> WorkflowState:
+                              today: str, limit: int, is_reset: bool = False) -> WorkflowState:
     """Salva contagem no Firestore."""
     try:
         from google.cloud.firestore_v1 import Increment
@@ -202,6 +226,27 @@ async def _save_to_firestore(db, phone_hash: str, doc_id: str,
         logger.info("[save-count] Lendo doc %s… do Firestore...", doc_id)
         doc = await asyncio.to_thread(doc_ref.get)
         logger.info("[save-count] Doc existe: %s", doc.exists)
+
+        # ── /reset: zerar contadores do usuário ──
+        if is_reset:
+            if doc.exists:
+                reset_data = {
+                    "dailyMessageCount": 0,
+                    "totalMessageCount": 0,
+                    "lastInteractionDate": today,
+                }
+                await asyncio.to_thread(doc_ref.update, reset_data)
+                logger.info("[save-count] ✅ RESET: %s… — contadores zerados", doc_id)
+            else:
+                # Doc não existe, criar com zeros
+                reset_data = {
+                    "dailyMessageCount": 0,
+                    "totalMessageCount": 0,
+                    "lastInteractionDate": today,
+                }
+                await asyncio.to_thread(doc_ref.set, reset_data)
+                logger.info("[save-count] ✅ RESET (novo doc): %s… — criado com zeros", doc_id)
+            return {"daily_count": 0, "is_new_user": False, "is_reset_command": True}
 
         if not doc.exists:
             # Caso A: Primeiro acesso — criar documento
@@ -214,7 +259,7 @@ async def _save_to_firestore(db, phone_hash: str, doc_id: str,
             await asyncio.to_thread(doc_ref.set, data)
             logger.info("[save-count] ✅ NOVO usuário %s… → 1/%d (criado no Firestore)",
                         doc_id, limit)
-            return {"daily_count": 1}
+            return {"daily_count": 1, "is_new_user": True, "is_reset_command": False}
 
         data = doc.to_dict()
         last_date = data.get("lastInteractionDate", "")
@@ -223,6 +268,12 @@ async def _save_to_firestore(db, phone_hash: str, doc_id: str,
 
         logger.info("[save-count] Doc %s… dados atuais: lastDate=%s, daily=%d, total=%d",
                     doc_id, last_date, daily_count, total_count)
+
+        # Detectar se é usuário novo (totalMessageCount == 0)
+        is_new_user = total_count == 0
+        if is_new_user:
+            logger.info("[save-count] Usuário %s… tem totalMessageCount=0 — marcando como novo",
+                        doc_id)
 
         if today != last_date:
             # Caso B: Novo dia — resetar daily
@@ -235,14 +286,14 @@ async def _save_to_firestore(db, phone_hash: str, doc_id: str,
                         last_date, today)
             await asyncio.to_thread(doc_ref.update, update_data)
             logger.info("[save-count] ✅ NOVO DIA %s… → 1/%d", doc_id, limit)
-            return {"daily_count": 1}
+            return {"daily_count": 1, "is_new_user": is_new_user, "is_reset_command": False}
 
         # Mesmo dia
         if daily_count >= limit:
             # Caso D: Limite já atingido — NÃO atualizar banco
             logger.warning("[save-count] 🚫 LIMITE JÁ ATINGIDO %s… → %d/%d (NÃO incrementou)",
                            doc_id, daily_count, limit)
-            return {"daily_count": daily_count}
+            return {"daily_count": daily_count, "is_new_user": is_new_user, "is_reset_command": False}
 
         # Caso C: Dentro do limite — incrementar
         update_data = {
@@ -253,14 +304,14 @@ async def _save_to_firestore(db, phone_hash: str, doc_id: str,
         await asyncio.to_thread(doc_ref.update, update_data)
         new_count = daily_count + 1
         logger.info("[save-count] ✅ INCREMENTOU %s… → %d/%d", doc_id, new_count, limit)
-        return {"daily_count": new_count}
+        return {"daily_count": new_count, "is_new_user": is_new_user, "is_reset_command": False}
 
     except Exception as e:
         logger.exception("[save-count] ❌ ERRO Firestore: %s — usando fallback in-memory", e)
         # Fallback: usar in-memory para não perder o rate limit
         count = _memory_increment(phone_hash)
         logger.info("[save-count] FALLBACK in-memory: %s… → %d/%d", doc_id, count, limit)
-        return {"daily_count": count}
+        return {"daily_count": count, "is_new_user": False, "is_reset_command": False}
 
 
 # ═══════════════════════════════════════════════════════════════════
