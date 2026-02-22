@@ -1,5 +1,6 @@
 docker login
-./dockerhub.sh
+./dockerhub.sh develop
+./dockerhub.sh production
 pkill -9 -f python
 
 # 🚀 Deploy do WhatsApp Integration Bot no EasyPanel com Docker

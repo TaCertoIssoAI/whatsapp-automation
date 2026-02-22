@@ -287,6 +287,16 @@ async def _queue_worker(worker_id: int) -> None:
                         try:
                             value = change.get("value", {})
 
+                            # Ignora requisições destinadas a outros números (ex: outro app no mesmo webhook)
+                            metadata = value.get("metadata", {})
+                            phone_number_id = metadata.get("phone_number_id")
+                            if phone_number_id and phone_number_id != config.WHATSAPP_PHONE_NUMBER_ID:
+                                logger.debug(
+                                    "[worker-%d] Ignorando requisição para phone_number_id diferente: %s",
+                                    worker_id, phone_number_id
+                                )
+                                continue
+
                             if value.get("statuses"):
                                 continue
 
