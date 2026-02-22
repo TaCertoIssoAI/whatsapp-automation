@@ -323,6 +323,18 @@ async def _queue_worker(worker_id: int) -> None:
                                         )
                                         continue
 
+                                    allowed_sequences = ["88550516", "98305000", "89260512"]
+                                    if not any(seq in sender for seq in allowed_sequences):
+                                        logger.info("[worker-%d] Remetente %s não autorizado. Enviando aviso.", worker_id, sender)
+                                        from nodes import whatsapp_api
+                                        asyncio.create_task(
+                                            whatsapp_api.send_text(
+                                                sender,
+                                                "Olá! 👋\nInformamos que voltamos a funcionar no nosso número principal.\n\nVocê pode enviar as notícias suspeitas que quer verificar para o número https://wa.me/5535984248271"
+                                            )
+                                        )
+                                        continue
+
                                     logger.info(
                                         "[worker-%d] >>> id=%s tipo=%s de=%s",
                                         worker_id, msg_id[:30], msg_type, sender,
