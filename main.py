@@ -217,6 +217,8 @@ async def _process_message(body: dict, message_id: str, sender: str) -> None:
         except Exception:
             _total_errors += 1
             logger.exception("[%s] ✗ Erro no processamento", message_id[:30])
+            logger.debug("Body com erro: %s", json.dumps(body, ensure_ascii=False))
+
             if sender:
                 with suppress(Exception):
                     from nodes import whatsapp_api
