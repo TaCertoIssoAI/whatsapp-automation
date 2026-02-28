@@ -141,6 +141,47 @@ def _build_single_message_body(
         return copy.deepcopy(original_body)
 
 
+def _extract_text_from_message(message: dict) -> str:
+    """Extrai texto de uma mensagem do webhook (text, interactive, button)."""
+    msg_type = message.get("type", "")
+    if msg_type == "text":
+        return message.get("text", {}).get("body", "")
+    if msg_type == "interactive":
+        interactive = message.get("interactive", {})
+        button = interactive.get("button_reply", {})
+        if button:
+            return button.get("title", "")
+        list_reply = interactive.get("list_reply", {})
+        if list_reply:
+            return list_reply.get("title", "")
+    if msg_type == "button":
+        return message.get("button", {}).get("text", "")
+    return ""
+
+
+def _extract_media_id_from_message(message: dict) -> str:
+    """Extrai media_id de uma mensagem de mídia."""
+    msg_type = message.get("type", "")
+    media_obj = message.get(msg_type, {})
+    return media_obj.get("id", "")
+
+
+def _extract_caption_from_message(message: dict) -> str:
+    """Extrai caption de uma mensagem de imagem/vídeo."""
+    msg_type = message.get("type", "")
+    media_obj = message.get(msg_type, {})
+    return media_obj.get("caption", "")
+
+
+def _extract_contact_name(value: dict) -> str:
+    """Extrai nome do contato do payload."""
+    contacts = value.get("contacts", [])
+    if not contacts:
+        return ""
+    profile = contacts[0].get("profile", {})
+    return profile.get("name", "")
+
+
 async def _process_message(body: dict, message_id: str, sender: str) -> None:
     """Processa uma mensagem via LangGraph, com semáforo de concorrência.
 
@@ -166,12 +207,18 @@ async def _process_message(body: dict, message_id: str, sender: str) -> None:
         # longos (ex: vídeo, fact-check lento) criamos uma task paralela que
         # renova o indicador a cada 20s até o processamento terminar.
         # Roda em paralelo — não bloqueia nem atrasa o fluxo principal.
+        #
+        # O _typing_stop event é REGISTRADO no whatsapp_api para que o
+        # send_text/send_audio parem o keepalive EXATAMENTE ao enviar a
+        # resposta (sem delay de até 20s).
         _typing_stop = asyncio.Event()
 
         async def _typing_keepalive() -> None:
             if not message_id:
                 return
             from nodes import whatsapp_api
+            # Registrar o event no whatsapp_api para stop automático ao enviar
+            whatsapp_api.register_typing_stop_event(sender, _typing_stop)
             # Renovação imediata ao entrar no semáforo (pode ter ficado na fila)
             with suppress(Exception):
                 await whatsapp_api.send_typing_indicator(message_id)
@@ -233,6 +280,10 @@ async def _process_message(body: dict, message_id: str, sender: str) -> None:
             typing_task.cancel()
             with suppress(Exception):
                 await typing_task
+            # Desregistrar o event do whatsapp_api
+            with suppress(Exception):
+                from nodes import whatsapp_api
+                whatsapp_api.unregister_typing_stop_event(sender)
 
 
 def _task_done_callback(task: asyncio.Task) -> None:
@@ -346,6 +397,12 @@ async def _queue_worker(worker_id: int) -> None:
                                         body, entry_idx, change_idx, msg_idx,
                                     )
 
+                                    # Extrair texto, media_id, caption e nome para o handler
+                                    msg_text = _extract_text_from_message(message)
+                                    msg_media_id = _extract_media_id_from_message(message)
+                                    msg_caption = _extract_caption_from_message(message)
+                                    msg_name = _extract_contact_name(value)
+
                                     # Typing indicator imediato — dispara ANTES do
                                     # semáforo de concorrência para que o usuário veja
                                     # "digitando..." mesmo enquanto aguarda na fila.
@@ -353,9 +410,19 @@ async def _queue_worker(worker_id: int) -> None:
                                         from nodes import whatsapp_api
                                         whatsapp_api.typing_indicator_fire_and_forget(msg_id)
 
+                                    # Rotear pelo message_handler (debounce + classificação)
+                                    from nodes.message_handler import handle_incoming_message
                                     task = asyncio.create_task(
-                                        _process_message(
-                                            isolated_body, msg_id, sender,
+                                        handle_incoming_message(
+                                            phone=sender,
+                                            msg_id=msg_id,
+                                            msg_type=msg_type,
+                                            text=msg_text,
+                                            media_id=msg_media_id,
+                                            caption=msg_caption,
+                                            name=msg_name,
+                                            isolated_body=isolated_body,
+                                            process_message_callback=_process_message,
                                         ),
                                         name=f"msg-{msg_id[-12:]}",
                                     )
@@ -459,6 +526,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.warning("Assinatura HMAC: DESATIVADA")
 
+    logger.info("Redis: %s", config.REDIS_URL)
+    logger.info("Classifier model: %s", config.GEMINI_CLASSIFIER_MODEL)
+    logger.info("Chat model: %s", config.GEMINI_CHAT_MODEL)
     logger.info("API: %s", config.WHATSAPP_API_BASE_URL)
     logger.info("Fact-check: %s", config.FACT_CHECK_API_URL)
     logger.info("Porta: %d", config.WEBHOOK_PORT)
@@ -495,11 +565,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await asyncio.wait(pending, timeout=5)
         _active_tasks.clear()
 
-    # 3. Fechar clients HTTP dos módulos
+    # 3. Fechar clients HTTP dos módulos e Redis
     with suppress(Exception):
         from nodes import whatsapp_api, fact_checker
         await whatsapp_api.close_client()
         await fact_checker.close_client()
+    with suppress(Exception):
+        from nodes.message_handler import close_redis
+        await close_redis()
+        logger.info("Redis desconectado")
 
     # 4. Desligar thread pool
     _thread_pool.shutdown(wait=False)

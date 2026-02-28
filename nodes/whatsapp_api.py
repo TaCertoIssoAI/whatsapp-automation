@@ -19,6 +19,29 @@ _MAX_TEXT_LENGTH = 4096
 _MAX_RETRIES = 3
 _RETRY_DELAYS = [1, 2, 4]
 
+# ── Typing indicator management ──
+# Maps recipient phone → asyncio.Event that stops the keepalive loop.
+# When send_text/send_audio delivers a message, we set the event so
+# the keepalive task stops immediately (no stale "typing..." after reply).
+_typing_stop_events: dict[str, asyncio.Event] = {}
+
+
+def register_typing_stop_event(recipient: str, event: asyncio.Event) -> None:
+    """Registra um Event para parar o typing keepalive de um destinatário."""
+    _typing_stop_events[recipient] = event
+
+
+def unregister_typing_stop_event(recipient: str) -> None:
+    """Remove o Event de typing de um destinatário."""
+    _typing_stop_events.pop(recipient, None)
+
+
+def _stop_typing_for(recipient: str) -> None:
+    """Para o typing keepalive para o destinatário (chamado ao enviar mensagem)."""
+    ev = _typing_stop_events.get(recipient)
+    if ev is not None:
+        ev.set()
+
 # Client singleton com connection pool — reutiliza conexões TCP/TLS
 _client: httpx.AsyncClient | None = None
 
@@ -150,7 +173,15 @@ async def send_text(
     text: str,
     quoted_message_id: str | None = None,
 ) -> dict:
-    """Envia mensagem de texto. Divide automaticamente se > 4096 chars."""
+    """Envia mensagem de texto. Divide automaticamente se > 4096 chars.
+
+    Automaticamente para o typing keepalive para este destinatário
+    assim que a primeira parte da mensagem é enviada.
+    """
+    # Parar typing indicator ANTES de enviar (a mensagem em si já cancela
+    # o indicador no lado do WhatsApp, mas paramos o keepalive loop no nosso lado)
+    _stop_typing_for(remote_jid)
+
     chunks = _split_text(text)
     last_result = {}
 
@@ -190,6 +221,7 @@ async def upload_media(
 # ── Enviar Áudio ──
 
 async def send_audio(remote_jid: str, audio_bytes: bytes) -> dict:
+    _stop_typing_for(remote_jid)
     media_id = await upload_media(
         audio_bytes, mime_type="audio/ogg; codecs=opus", filename="audio.ogg",
     )

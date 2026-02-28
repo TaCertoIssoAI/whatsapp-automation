@@ -1,0 +1,6 @@
+Collecting redis
+  Downloading redis-7.2.1-py3-none-any.whl.metadata (12 kB)
+Downloading redis-7.2.1-py3-none-any.whl (396 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 396.1/396.1 kB 1.6 MB/s eta 0:00:00
+Installing collected packages: redis
+Successfully installed redis-7.2.1

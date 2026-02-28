@@ -1,11 +1,28 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   whatsapp-bot:
     build: .
     container_name: whatsapp-integration
     restart: unless-stopped
     stop_grace_period: 45s
+    depends_on:
+      redis:
+        condition: service_healthy
     env_file:
       - .env
     ports:
@@ -24,6 +41,8 @@ services:
       - GEMINI_VIDEO_MODEL=${GEMINI_VIDEO_MODEL:-gemini-3-flash-preview}
       - GEMINI_TTS_MODEL=${GEMINI_TTS_MODEL:-gemini-2.5-flash-preview-tts}
       - GEMINI_TTS_VOICE=${GEMINI_TTS_VOICE:-Kore}
+      - GEMINI_CLASSIFIER_MODEL=${GEMINI_CLASSIFIER_MODEL:-gemini-2.5-flash-lite}
+      - GEMINI_CHAT_MODEL=${GEMINI_CHAT_MODEL:-gemini-2.5-flash-lite}
       
       # Google Cloud Vision API
       - GOOGLE_CLOUD_API_KEY=${GOOGLE_CLOUD_API_KEY}
@@ -36,6 +55,9 @@ services:
       - HASH_SALT=${HASH_SALT}
       - DAILY_MESSAGE_LIMIT=${DAILY_MESSAGE_LIMIT:-5}
       
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      
       # Servidor
       - WEBHOOK_PORT=${WEBHOOK_PORT:-5000}
     volumes:
@@ -46,3 +68,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  redis_data:

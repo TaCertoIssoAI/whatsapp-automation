@@ -1,5 +1,6 @@
 """Processamento de mídia: áudio, texto, imagem e vídeo."""
 
+import asyncio
 import base64
 import logging
 import struct
@@ -202,19 +203,27 @@ async def process_image(state: WorkflowState) -> WorkflowState:
         await _send_error(remote_jid, msg_id, "Não consegui baixar a imagem.")
         return {"rationale": ""}  # type: ignore[return-value]
 
+    # Executar análise de imagem e pesquisa reversa EM PARALELO
+    # para reduzir o tempo total de processamento
+
+    async def _analyze():
+        return await ai_services.analyze_image_content(image_b64)
+
+    async def _reverse():
+        try:
+            return await ai_services.reverse_image_search(image_b64)
+        except Exception:
+            logger.warning("Reverse image search falhou, continuando sem ela")
+            return "Pesquisa reversa indisponível."
+
     try:
-        image_analysis = await ai_services.analyze_image_content(image_b64)
+        image_analysis, reverse_result = await asyncio.gather(
+            _analyze(), _reverse()
+        )
     except Exception:
         logger.exception("Falha ao analisar imagem")
         await _send_error(remote_jid, msg_id, "Não consegui analisar a imagem.")
         return {"rationale": ""}  # type: ignore[return-value]
-
-    # Reverse search pode falhar sem impedir o fluxo
-    try:
-        reverse_result = await ai_services.reverse_image_search(image_b64)
-    except Exception:
-        logger.warning("Reverse image search falhou, continuando sem ela")
-        reverse_result = "Pesquisa reversa indisponível."
 
     description = (
         f"{image_analysis}\n\n"

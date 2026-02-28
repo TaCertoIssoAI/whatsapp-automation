@@ -167,14 +167,25 @@ async def save_message_count(state: WorkflowState) -> WorkflowState:
 
     Retorna daily_count no state para check_rate_limit usar.
     Também retorna is_new_user (True se o usuário é novo ou totalMessageCount == 0).
-    Também detecta /reset e zera os contadores — /reset SEMPRE funciona, mesmo
-    quando o limite diário foi atingido, pois o roteamento desvia antes do check_rate_limit.
+    Também detecta /reset e zera os contadores — /reset só funciona para números
+    autorizados (88550516, 89260512, 98305000). O roteamento desvia antes do
+    check_rate_limit, então /reset funciona mesmo com limite atingido.
     Se Firestore indisponível, usa fallback in-memory.
     """
     phone = state.get("numero_quem_enviou", "")
     mensagem = state.get("mensagem", "").strip()
     limit = config.DAILY_MESSAGE_LIMIT
-    is_reset = mensagem.lower() == "/reset"
+
+    # /reset só é permitido para números autorizados
+    _RESET_ALLOWED_SEQUENCES = ["88550516", "89260512", "98305000"]
+    is_reset = (
+        mensagem.lower() == "/reset"
+        and any(seq in phone for seq in _RESET_ALLOWED_SEQUENCES)
+    )
+
+    # Se o comando é /reset mas o número não é autorizado, tratar como mensagem normal
+    if mensagem.lower() == "/reset" and not is_reset:
+        logger.info("[save-count] /reset de número não autorizado: …%s", phone[-4:] if phone else "???")
 
     if not phone:
         logger.warning("[save-count] Sem número de telefone — liberando")
