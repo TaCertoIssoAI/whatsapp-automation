@@ -94,10 +94,16 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         return {"rationale": ""}  # type: ignore[return-value]
 
     try:
+        status_msg = (
+            "Estou analisando o áudio para verificar se é fake news. "
+            "Isso pode levar de 10 segundos a 1 minuto."
+        )
+        batch_notes = state.get("batch_status_notes", "")
+        if batch_notes:
+            status_msg += f"\n\nℹ️ {batch_notes}"
         await whatsapp_api.send_text(
             remote_jid,
-            "Estou analisando o áudio para verificar se é fake news. "
-            "Isso pode levar de 10 segundos a 1 minuto.",
+            status_msg,
             quoted_message_id=msg_id,
         )
         # Reativar typing indicator após enviar msg de status (fire-and-forget)
@@ -119,11 +125,17 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         await _send_error(remote_jid, msg_id, "Não consegui transcrever o áudio.")
         return {"rationale": ""}  # type: ignore[return-value]
 
+    # Montar content_parts para o fact-checker
+    batch_extra = state.get("batch_extra_text", "")
+    content_parts = [
+        {"textContent": transcription.replace("\n", " "), "type": "audio"},
+    ]
+    if batch_extra:
+        content_parts.append({"textContent": batch_extra, "type": "text"})
+
     try:
-        result = await fact_checker.check_text(
-            state.get("endpoint_api", ""),
-            transcription.replace("\n", " "),
-            content_type="audio",
+        result = await fact_checker.check_content(
+            state.get("endpoint_api", ""), content_parts,
         )
     except Exception:
         logger.exception("Falha no fact-check do áudio")
@@ -149,10 +161,16 @@ async def process_text(state: WorkflowState) -> WorkflowState:
         return {"rationale": ""}  # type: ignore[return-value]
 
     try:
+        status_msg = (
+            "Estou analisando a mensagem para verificar se é fake news. "
+            "Isso pode levar de 10 segundos a 1 minuto."
+        )
+        batch_notes = state.get("batch_status_notes", "")
+        if batch_notes:
+            status_msg += f"\n\nℹ️ {batch_notes}"
         await whatsapp_api.send_text(
             remote_jid,
-            "Estou analisando a mensagem para verificar se é fake news. "
-            "Isso pode levar de 10 segundos a 1 minuto.",
+            status_msg,
             quoted_message_id=msg_id,
         )
         # Reativar typing indicator após enviar msg de status (fire-and-forget)
@@ -185,10 +203,16 @@ async def process_image(state: WorkflowState) -> WorkflowState:
         return {"rationale": ""}  # type: ignore[return-value]
 
     try:
+        status_msg = (
+            "Estou analisando a imagem para verificar se é fake news. "
+            "Isso pode levar de 10 segundos a 1 minuto."
+        )
+        batch_notes = state.get("batch_status_notes", "")
+        if batch_notes:
+            status_msg += f"\n\nℹ️ {batch_notes}"
         await whatsapp_api.send_text(
             remote_jid,
-            "Estou analisando a imagem para verificar se é fake news. "
-            "Isso pode levar de 10 segundos a 1 minuto.",
+            status_msg,
             quoted_message_id=msg_id,
         )
         # Reativar typing indicator após enviar msg de status (fire-and-forget)
@@ -233,9 +257,17 @@ async def process_image(state: WorkflowState) -> WorkflowState:
 
     caption = state.get("caption", "")
 
+    # Montar content_parts: descrição da imagem + texto extra do batch + legenda
+    batch_extra = state.get("batch_extra_text", "")
     content_parts = [{"textContent": description, "type": "image"}]
+    # Combinar caption e batch_extra_text como texto adicional
+    extra_texts = []
+    if batch_extra:
+        extra_texts.append(batch_extra)
     if caption:
-        content_parts.append({"textContent": caption, "type": "text"})
+        extra_texts.append(caption)
+    if extra_texts:
+        content_parts.append({"textContent": "\n".join(extra_texts), "type": "text"})
 
     try:
         result = await fact_checker.check_content(state.get("endpoint_api", ""), content_parts)
@@ -263,10 +295,16 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         return {"rationale": ""}  # type: ignore[return-value]
 
     try:
+        status_msg = (
+            "Estou analisando o vídeo para verificar se é fake news. "
+            "Isso pode levar de 10 segundos a 1 minuto."
+        )
+        batch_notes = state.get("batch_status_notes", "")
+        if batch_notes:
+            status_msg += f"\n\nℹ️ {batch_notes}"
         await whatsapp_api.send_text(
             remote_jid,
-            "Estou analisando o vídeo para verificar se é fake news. "
-            "Isso pode levar de 10 segundos a 1 minuto.",
+            status_msg,
             quoted_message_id=msg_id,
         )
         # Reativar typing indicator após enviar msg de status (fire-and-forget)
@@ -307,9 +345,16 @@ async def process_video(state: WorkflowState) -> WorkflowState:
 
     caption = state.get("caption", "")
 
+    # Montar content_parts: descrição do vídeo + texto extra do batch + legenda
+    batch_extra = state.get("batch_extra_text", "")
     content_parts = [{"textContent": description, "type": "video"}]
+    extra_texts = []
+    if batch_extra:
+        extra_texts.append(batch_extra)
     if caption:
-        content_parts.append({"textContent": caption, "type": "text"})
+        extra_texts.append(caption)
+    if extra_texts:
+        content_parts.append({"textContent": "\n".join(extra_texts), "type": "text"})
 
     try:
         result = await fact_checker.check_content(state.get("endpoint_api", ""), content_parts)

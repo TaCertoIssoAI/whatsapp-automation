@@ -140,6 +140,10 @@ def extract_data(state: WorkflowState) -> WorkflowState:
         "tipo_mensagem": tipo_mensagem,
         "media_id": media_id,
         "caption": caption,
+        # Campos injetados pelo message_handler para batches
+        "batch_extra_text": body.get("_batch_extra_text", ""),
+        "batch_status_notes": body.get("_batch_status_notes", ""),
+        "skip_counter_increment": body.get("_skip_counter_increment", False),
     }
 
     return extracted  # type: ignore[return-value]

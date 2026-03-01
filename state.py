@@ -45,3 +45,14 @@ class WorkflowState(TypedDict, total=False):
     # Resultado do fact-checking
     rationale: str
     response_without_links: str
+
+    # Texto extra do batch (quando múltiplas mensagens são enviadas juntas)
+    # Contém todos os textos + legendas + descrições de mídias extras concatenados
+    batch_extra_text: str
+
+    # Notas sobre limitações do batch (>3 mídias, tipos mistos) para a msg de status
+    batch_status_notes: str
+
+    # Flag: True quando o batch veio do debounce e NÃO deve incrementar contador
+    # do Firebase (porque as mensagens chegaram em <1s = 1 verificação apenas)
+    skip_counter_increment: bool

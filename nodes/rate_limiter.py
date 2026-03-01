@@ -159,6 +159,59 @@ def _memory_increment(phone_hash: str) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  Helper: leitura de contagem sem incrementar (batch dentro do debounce)
+# ═══════════════════════════════════════════════════════════════════
+
+async def _read_count_without_increment(phone: str) -> WorkflowState:
+    """Lê daily_count e is_new_user SEM incrementar contadores.
+
+    Usado quando skip_counter_increment=True (batch de mensagens dentro
+    da janela de debounce de 1s = conta como 1 verificação).
+    """
+    phone_hash = _hash_phone(phone)
+    doc_id = phone_hash[:12]
+    today = _today()
+
+    db = None
+    try:
+        if not _firestore_initialized:
+            db = await asyncio.to_thread(_get_firestore_db)
+        else:
+            db = _firestore_db
+    except Exception:
+        pass
+
+    if db is not None:
+        try:
+            doc_ref = db.collection(_COLLECTION).document(phone_hash)
+            doc = await asyncio.to_thread(doc_ref.get)
+            if not doc.exists:
+                # Usuário novo — será criado pelo próximo request sem skip
+                logger.info("[save-count] skip-read: %s… doc não existe, daily=0", doc_id)
+                return {"daily_count": 0, "is_new_user": True, "is_reset_command": False}
+            data = doc.to_dict()
+            last_date = data.get("lastInteractionDate", "")
+            daily_count = data.get("dailyMessageCount", 0)
+            total_count = data.get("totalMessageCount", 0)
+            is_new_user = total_count == 0
+            # Se o dia mudou, o count é efetivamente 0
+            if today != last_date:
+                daily_count = 0
+            logger.info("[save-count] skip-read: %s… daily=%d (sem incrementar)", doc_id, daily_count)
+            return {"daily_count": daily_count, "is_new_user": is_new_user, "is_reset_command": False}
+        except Exception:
+            logger.warning("[save-count] skip-read: erro ao ler Firestore, usando in-memory")
+
+    # Fallback in-memory
+    entry = _memory_counts.get(phone_hash)
+    if entry and entry["date"] == today:
+        return {"daily_count": entry["count"], "is_new_user": False, "is_reset_command": False}
+    # Se não há entry, o usuário nunca interagiu (é novo) ou é um novo dia
+    is_new = phone_hash not in _memory_counts
+    return {"daily_count": 0, "is_new_user": is_new, "is_reset_command": False}
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  NÓ 1: save_message_count — roda para TODA mensagem
 # ═══════════════════════════════════════════════════════════════════
 
@@ -175,6 +228,7 @@ async def save_message_count(state: WorkflowState) -> WorkflowState:
     phone = state.get("numero_quem_enviou", "")
     mensagem = state.get("mensagem", "").strip()
     limit = config.DAILY_MESSAGE_LIMIT
+    skip_increment = state.get("skip_counter_increment", False)
 
     # /reset só é permitido para números autorizados
     _RESET_ALLOWED_SEQUENCES = ["88550516", "89260512", "98305000"]
@@ -190,6 +244,13 @@ async def save_message_count(state: WorkflowState) -> WorkflowState:
     if not phone:
         logger.warning("[save-count] Sem número de telefone — liberando")
         return {"daily_count": 0, "is_new_user": False, "is_reset_command": False}
+
+    # Se veio de um batch (debounce) com múltiplas mensagens dentro de <1s,
+    # não incrementar o contador — conta como UMA verificação apenas.
+    # Ainda precisa ler o daily_count para o check_rate_limit funcionar.
+    if skip_increment and not is_reset:
+        logger.info("[save-count] skip_counter_increment=True — lendo contagem sem incrementar")
+        return await _read_count_without_increment(phone)
 
     phone_hash = _hash_phone(phone)
     doc_id = phone_hash[:12]  # para logs
