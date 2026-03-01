@@ -44,4 +44,4 @@ class WorkflowState(TypedDict, total=False):
 
     # Resultado do fact-checking
     rationale: str
-    response_without_links: str
+    audio_script: str

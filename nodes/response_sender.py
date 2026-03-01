@@ -93,7 +93,7 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
 
 async def send_audio_response(state: WorkflowState) -> WorkflowState:
     """Gera áudio TTS do rationale e envia."""
-    response_text = state.get("response_without_links", state.get("rationale", ""))
+    response_text = state.get("audio_script", state.get("rationale", ""))
     remote_jid = state.get("numero_quem_enviou", "")
     msg_id = state.get("id_mensagem", "")
 

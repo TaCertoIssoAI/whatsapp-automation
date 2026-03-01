@@ -133,7 +133,7 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         "transcription": transcription,
         "media_base64": audio_b64,
         "rationale": result.get("rationale", ""),
-        "response_without_links": result.get("responseWithoutLinks", ""),
+        "audio_script": result.get("responseWithoutLinks", ""),
     }  # type: ignore[return-value]
 
 
