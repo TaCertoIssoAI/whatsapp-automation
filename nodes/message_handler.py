@@ -83,8 +83,12 @@ async def _add_pending_message(phone: str, msg_data: dict) -> None:
     """Adiciona mensagem à lista de pendentes no Redis."""
     r = await _get_redis()
     key = _pending_key(phone)
-    await r.rpush(key, json.dumps(msg_data, ensure_ascii=False))
-    await r.expire(key, _PENDING_TTL)
+    # Pipeline atômico: push + trim + renova TTL
+    pipe = r.pipeline()
+    pipe.rpush(key, json.dumps(msg_data, ensure_ascii=False))
+    pipe.ltrim(key, -_MAX_PENDING_ENTRIES, -1)  # mantém só as últimas 50
+    pipe.expire(key, _PENDING_TTL)
+    await pipe.execute()
 
 
 async def _get_pending_messages(phone: str) -> list[dict]:
@@ -149,6 +153,12 @@ def _chat_history_key(phone: str) -> str:
     return f"chat_history:{phone}"
 
 
+# Limite máximo de entradas no histórico (proteção contra listas gigantes)
+_MAX_CHAT_HISTORY_ENTRIES = 100
+# Limite máximo de mensagens pendentes na fila
+_MAX_PENDING_ENTRIES = 50
+
+
 async def _add_to_chat_history(phone: str, role: str, content: str) -> None:
     """Adiciona mensagem ao histórico de chat (user ou bot)."""
     r = await _get_redis()
@@ -158,20 +168,32 @@ async def _add_to_chat_history(phone: str, role: str, content: str) -> None:
         "content": content,
         "timestamp": time.time(),
     }, ensure_ascii=False)
-    await r.rpush(key, entry)
-    await r.expire(key, _CHAT_HISTORY_TTL)
+    # Pipeline atômico: push + trim + renova TTL
+    pipe = r.pipeline()
+    pipe.rpush(key, entry)
+    pipe.ltrim(key, -_MAX_CHAT_HISTORY_ENTRIES, -1)  # mantém só as últimas 100
+    pipe.expire(key, _CHAT_HISTORY_TTL)
+    await pipe.execute()
 
 
 async def _get_chat_history(phone: str) -> list[dict]:
-    """Recupera o histórico de chat dos últimos 5 minutos."""
+    """Recupera o histórico de chat dos últimos 5 minutos.
+
+    Filtra entradas mais antigas que _CHAT_HISTORY_TTL em Python
+    (o TTL do Redis renova a cada mensagem nova, mas entradas velhas
+    dentro da lista podem persistir — filtramos aqui).
+    """
     r = await _get_redis()
     key = _chat_history_key(phone)
     items = await r.lrange(key, 0, -1)
     now = time.time()
     history = []
     for item in items:
-        entry = json.loads(item)
-        # Filtrar mensagens mais antigas que 5 minutos
+        try:
+            entry = json.loads(item)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        # Manter apenas mensagens dos últimos 5 minutos
         if now - entry.get("timestamp", 0) <= _CHAT_HISTORY_TTL:
             history.append(entry)
     return history
@@ -583,12 +605,13 @@ async def _classify_and_act(
             if is_new_user:
                 try:
                     await whatsapp_api.send_text(phone, _WELCOME_MESSAGE)
+                    await _add_to_chat_history(phone, "bot", _WELCOME_MESSAGE)
                     logger.info("[classify] Welcome enviado para novo usuário (CONVERSAR) %s", phone[-4:])
                 except Exception:
                     logger.warning("[classify] Falha ao enviar welcome para %s", phone[-4:])
 
             # Verificar se atingiu o limite
-            if daily_count >= limit:
+            if daily_count > limit:
                 logger.warning(
                     "[classify] 🚫 CONVERSAR bloqueado por rate-limit: %d/%d para %s",
                     daily_count, limit, phone[-4:],

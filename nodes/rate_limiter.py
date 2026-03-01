@@ -361,7 +361,7 @@ async def _save_to_firestore(db, phone_hash: str, doc_id: str,
             return {"daily_count": 1, "is_new_user": is_new_user, "is_reset_command": False}
 
         # Mesmo dia
-        if daily_count >= limit:
+        if daily_count > limit:
             # Caso D: Limite já atingido — NÃO atualizar banco
             logger.warning("[save-count] 🚫 LIMITE JÁ ATINGIDO %s… → %d/%d (NÃO incrementou)",
                            doc_id, daily_count, limit)
@@ -407,8 +407,8 @@ async def check_rate_limit(state: WorkflowState) -> WorkflowState:
         logger.info("[rate-limit] Sem telefone — liberando")
         return {"rate_limited": False}
 
-    if daily_count >= limit:
-        logger.warning("[rate-limit] 🚫 BLOQUEADO: %d >= %d — enviando aviso ao usuário",
+    if daily_count > limit:
+        logger.warning("[rate-limit] 🚫 BLOQUEADO: %d > %d — enviando aviso ao usuário",
                        daily_count, limit)
         try:
             from nodes import whatsapp_api

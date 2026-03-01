@@ -224,10 +224,8 @@ async def _process_message(body: dict, message_id: str, sender: str) -> None:
                 await whatsapp_api.send_typing_indicator(message_id)
             while not _typing_stop.is_set():
                 try:
-                    await asyncio.wait_for(
-                        asyncio.shield(asyncio.ensure_future(_typing_stop.wait())),
-                        timeout=20,
-                    )
+                    # Esperar até 20s pelo evento de stop; se expirar, renovar typing
+                    await asyncio.wait_for(_typing_stop.wait(), timeout=20)
                 except asyncio.TimeoutError:
                     if not _typing_stop.is_set():
                         with suppress(Exception):

@@ -22,6 +22,9 @@ async def send_welcome_message(state: WorkflowState) -> WorkflowState:
     try:
         await whatsapp_api.send_text(remote_jid, _WELCOME_MESSAGE)
         logger.info("[welcome] ✅ Mensagem de boas-vindas enviada")
+        # Salvar resposta do bot no histórico de chat
+        from nodes.message_handler import save_bot_response_to_history
+        await save_bot_response_to_history(remote_jid, _WELCOME_MESSAGE)
     except Exception:
         logger.exception("[welcome] Falha ao enviar mensagem de boas-vindas para %s", remote_jid)
 
@@ -45,9 +48,12 @@ async def handle_reset_command(state: WorkflowState) -> WorkflowState:
             _RESET_CONFIRMATION_MESSAGE,
             quoted_message_id=msg_id,
         )
-        logger.info("[reset] ✅ Confirmação de reset enviada")
+        logger.info("[reset] \u2705 Confirma\u00e7\u00e3o de reset enviada")
+        # Salvar resposta do bot no hist\u00f3rico de chat
+        from nodes.message_handler import save_bot_response_to_history
+        await save_bot_response_to_history(remote_jid, _RESET_CONFIRMATION_MESSAGE)
     except Exception:
-        logger.exception("[reset] Falha ao enviar confirmação de reset para %s", remote_jid)
+        logger.exception("[reset] Falha ao enviar confirma\u00e7\u00e3o de reset para %s", remote_jid)
 
     return {}  # type: ignore[return-value]
 
@@ -102,7 +108,7 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
 
 async def send_audio_response(state: WorkflowState) -> WorkflowState:
     """Gera áudio TTS do rationale e envia."""
-    response_text = state.get("response_without_links", state.get("rationale", ""))
+    response_text = state.get("audio_script", state.get("rationale", ""))
     remote_jid = state.get("numero_quem_enviou", "")
     msg_id = state.get("id_mensagem", "")
 
@@ -172,6 +178,9 @@ async def handle_document_unsupported(state: WorkflowState) -> WorkflowState:
             unsupported_msg,
             quoted_message_id=msg_id,
         )
+        # Salvar resposta do bot no histórico de chat
+        from nodes.message_handler import save_bot_response_to_history
+        await save_bot_response_to_history(remote_jid, unsupported_msg)
     except Exception:
         logger.exception("Falha ao enviar msg de doc não suportado para %s", remote_jid)
 
