@@ -879,7 +879,16 @@ async def _process_extra_media(
             continue
 
         try:
-            media_b64 = await whatsapp_api.download_media_as_base64(media_id)
+            from nodes.video_link_downloader import get_cached_video, is_ytdlp_media_id
+            if is_ytdlp_media_id(media_id):
+                cached = get_cached_video(media_id)
+                if cached:
+                    media_b64 = cached
+                else:
+                    logger.warning("[batch-media] Cache yt-dlp expirado para idx=%d de %s", idx, phone[-4:])
+                    continue
+            else:
+                media_b64 = await whatsapp_api.download_media_as_base64(media_id)
         except Exception:
             logger.warning("[batch-media] Falha ao baixar mídia extra idx=%d para %s", idx, phone[-4:])
             continue

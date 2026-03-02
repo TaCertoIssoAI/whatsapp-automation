@@ -37,6 +37,7 @@ import hmac
 import json
 import logging
 import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -391,15 +392,86 @@ async def _queue_worker(worker_id: int) -> None:
                                         worker_id, msg_id[:30], msg_type, sender,
                                     )
 
-                                    isolated_body = _build_single_message_body(
-                                        body, entry_idx, change_idx, msg_idx,
-                                    )
-
                                     # Extrair texto, media_id, caption e nome para o handler
                                     msg_text = _extract_text_from_message(message)
                                     msg_media_id = _extract_media_id_from_message(message)
                                     msg_caption = _extract_caption_from_message(message)
                                     msg_name = _extract_contact_name(value)
+
+                                    # ── INTERCEÇÃO DE LINKS DE VÍDEO ──
+                                    # Se é mensagem de texto, verifica se contém URL de
+                                    # plataforma de vídeo. Verifica duração ANTES de baixar.
+                                    # Em caso de sucesso, transforma a mensagem em tipo
+                                    # "video" antes do debounce/batch.
+                                    if msg_type == "text" and msg_text and not msg_media_id:
+                                        try:
+                                            from nodes.video_link_downloader import (
+                                                try_download_video_from_url,
+                                                cache_video,
+                                            )
+                                            dl_result = await try_download_video_from_url(msg_text)
+                                            if dl_result is not None:
+                                                if dl_result.status == "duration_exceeded":
+                                                    # Avisar o utilizador (mesma msg do vídeo nativo)
+                                                    from nodes import whatsapp_api as _wa
+                                                    try:
+                                                        await _wa.send_text(
+                                                            sender,
+                                                            "Para que eu possa analizar o conteúdo do vídeo, "
+                                                            "ele precisa ter uma duração máxima de 2 minutos.",
+                                                            quoted_message_id=msg_id,
+                                                        )
+                                                    except Exception:
+                                                        pass
+                                                    logger.info(
+                                                        "[worker-%d] Vídeo do link excede 120s (%ds), avisado o utilizador",
+                                                        worker_id, dl_result.duration,
+                                                    )
+                                                    # Não transformar — continua como texto normal
+
+                                                elif dl_result.status == "success":
+                                                    # Caption: texto do utilizador + descrição do vídeo
+                                                    user_text_clean = msg_text.replace(dl_result.url, "").strip()
+                                                    caption_parts = []
+                                                    if user_text_clean:
+                                                        caption_parts.append(user_text_clean)
+                                                    if dl_result.description:
+                                                        caption_parts.append(f"[Descrição original do vídeo]: {dl_result.description}")
+                                                    msg_caption = "\n".join(caption_parts)
+
+                                                    # Transformar em mensagem de vídeo
+                                                    synthetic_media_id = f"ytdlp_local_{uuid.uuid4().hex[:12]}"
+                                                    msg_type = "video"
+                                                    msg_media_id = synthetic_media_id
+                                                    msg_text = ""
+
+                                                    # Mutar o message dict para que _build_single_message_body
+                                                    # construa um isolated_body de tipo video
+                                                    message["type"] = "video"
+                                                    message["video"] = {
+                                                        "id": synthetic_media_id,
+                                                        "mime_type": "video/mp4",
+                                                        "caption": msg_caption,
+                                                    }
+                                                    message.pop("text", None)
+
+                                                    # Cachear o base64 para uso posterior em process_video
+                                                    cache_video(synthetic_media_id, dl_result.video_b64)
+
+                                                    logger.info(
+                                                        "[worker-%d] Link de vídeo intercetado: %s → id=%s",
+                                                        worker_id, dl_result.url, synthetic_media_id,
+                                                    )
+                                                # status "error" ou "not_video": fallback silencioso para texto
+                                        except Exception:
+                                            logger.warning(
+                                                "[worker-%d] Interceção de link de vídeo falhou, fallback para texto",
+                                                worker_id, exc_info=True,
+                                            )
+
+                                    isolated_body = _build_single_message_body(
+                                        body, entry_idx, change_idx, msg_idx,
+                                    )
 
                                     # Typing indicator imediato — dispara ANTES do
                                     # semáforo de concorrência para que o usuário veja

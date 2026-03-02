@@ -8,3 +8,4 @@ redis>=5.0.0
 python-dotenv>=1.0.1
 python-multipart>=0.0.12
 firebase-admin>=6.4.0
+yt-dlp>=2024.12.0

@@ -312,12 +312,24 @@ async def process_video(state: WorkflowState) -> WorkflowState:
     except Exception:
         pass
 
-    try:
-        video_b64 = await whatsapp_api.download_media_as_base64(media_id)
-    except Exception:
-        logger.exception("Falha ao baixar vídeo media_id=%s", media_id)
-        await _send_error(remote_jid, msg_id, "Não consegui baixar o vídeo.")
-        return {"rationale": ""}  # type: ignore[return-value]
+    # Verificar se é vídeo pré-baixado via yt-dlp (media_id sintético)
+    from nodes.video_link_downloader import get_cached_video, is_ytdlp_media_id
+    if is_ytdlp_media_id(media_id):
+        cached = get_cached_video(media_id)
+        if cached:
+            video_b64 = cached
+            logger.info("process_video: usando vídeo pré-baixado (yt-dlp) para %s", remote_jid)
+        else:
+            logger.warning("process_video: cache yt-dlp expirado para media_id=%s", media_id)
+            await _send_error(remote_jid, msg_id, "O download do vídeo expirou. Por favor, envie o link novamente.")
+            return {"rationale": ""}  # type: ignore[return-value]
+    else:
+        try:
+            video_b64 = await whatsapp_api.download_media_as_base64(media_id)
+        except Exception:
+            logger.exception("Falha ao baixar vídeo media_id=%s", media_id)
+            await _send_error(remote_jid, msg_id, "Não consegui baixar o vídeo.")
+            return {"rationale": ""}  # type: ignore[return-value]
 
     try:
         duration = get_video_duration_from_base64(video_b64)
