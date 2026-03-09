@@ -37,7 +37,6 @@ import hmac
 import json
 import logging
 import time
-import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -206,12 +205,13 @@ async def _process_message(body: dict, message_id: str, sender: str) -> None:
         # ── TYPING KEEP-ALIVE ──
         # O typing indicator dura 25s na Cloud API. Para processamentos mais
         # longos (ex: vídeo, fact-check lento) criamos uma task paralela que
-        # renova o indicador a cada 20s até o processamento terminar.
-        # Roda em paralelo — não bloqueia nem atrasa o fluxo principal.
+        # renova o indicador a cada 15s até o processamento terminar.
+        # Usamos 15s (não 20s) para ter margem de segurança contra jitter
+        # de rede e garantir que o indicador nunca expire visivelmente.
         #
         # O _typing_stop event é REGISTRADO no whatsapp_api para que o
         # send_text/send_audio parem o keepalive EXATAMENTE ao enviar a
-        # resposta (sem delay de até 20s).
+        # resposta (sem delay de até 15s).
         _typing_stop = asyncio.Event()
 
         async def _typing_keepalive() -> None:
@@ -219,14 +219,14 @@ async def _process_message(body: dict, message_id: str, sender: str) -> None:
                 return
             from nodes import whatsapp_api
             # Registrar o event no whatsapp_api para stop automático ao enviar
-            whatsapp_api.register_typing_stop_event(sender, _typing_stop)
+            whatsapp_api.register_typing_stop_event(sender, _typing_stop, message_id)
             # Renovação imediata ao entrar no semáforo (pode ter ficado na fila)
             with suppress(Exception):
                 await whatsapp_api.send_typing_indicator(message_id)
             while not _typing_stop.is_set():
                 try:
-                    # Esperar até 20s pelo evento de stop; se expirar, renovar typing
-                    await asyncio.wait_for(_typing_stop.wait(), timeout=20)
+                    # Esperar até 15s pelo evento de stop; se expirar, renovar typing
+                    await asyncio.wait_for(_typing_stop.wait(), timeout=15)
                 except asyncio.TimeoutError:
                     if not _typing_stop.is_set():
                         with suppress(Exception):
@@ -398,76 +398,11 @@ async def _queue_worker(worker_id: int) -> None:
                                     msg_caption = _extract_caption_from_message(message)
                                     msg_name = _extract_contact_name(value)
 
-                                    # ── INTERCEÇÃO DE LINKS DE VÍDEO ──
-                                    # Se é mensagem de texto, verifica se contém URL de
-                                    # plataforma de vídeo. Verifica duração ANTES de baixar.
-                                    # Em caso de sucesso, transforma a mensagem em tipo
-                                    # "video" antes do debounce/batch.
-                                    if msg_type == "text" and msg_text and not msg_media_id:
-                                        try:
-                                            from nodes.video_link_downloader import (
-                                                try_download_video_from_url,
-                                                cache_video,
-                                            )
-                                            dl_result = await try_download_video_from_url(msg_text)
-                                            if dl_result is not None:
-                                                if dl_result.status == "duration_exceeded":
-                                                    # Avisar o utilizador (mesma msg do vídeo nativo)
-                                                    from nodes import whatsapp_api as _wa
-                                                    try:
-                                                        await _wa.send_text(
-                                                            sender,
-                                                            "Para que eu possa analizar o conteúdo do vídeo, "
-                                                            "ele precisa ter uma duração máxima de 2 minutos.",
-                                                            quoted_message_id=msg_id,
-                                                        )
-                                                    except Exception:
-                                                        pass
-                                                    logger.info(
-                                                        "[worker-%d] Vídeo do link excede 120s (%ds), avisado o utilizador",
-                                                        worker_id, dl_result.duration,
-                                                    )
-                                                    # Não transformar — continua como texto normal
-
-                                                elif dl_result.status == "success":
-                                                    # Caption: texto do utilizador + descrição do vídeo
-                                                    user_text_clean = msg_text.replace(dl_result.url, "").strip()
-                                                    caption_parts = []
-                                                    if user_text_clean:
-                                                        caption_parts.append(user_text_clean)
-                                                    if dl_result.description:
-                                                        caption_parts.append(f"[Descrição original do vídeo]: {dl_result.description}")
-                                                    msg_caption = "\n".join(caption_parts)
-
-                                                    # Transformar em mensagem de vídeo
-                                                    synthetic_media_id = f"ytdlp_local_{uuid.uuid4().hex[:12]}"
-                                                    msg_type = "video"
-                                                    msg_media_id = synthetic_media_id
-                                                    msg_text = ""
-
-                                                    # Mutar o message dict para que _build_single_message_body
-                                                    # construa um isolated_body de tipo video
-                                                    message["type"] = "video"
-                                                    message["video"] = {
-                                                        "id": synthetic_media_id,
-                                                        "mime_type": "video/mp4",
-                                                        "caption": msg_caption,
-                                                    }
-                                                    message.pop("text", None)
-
-                                                    # Cachear o base64 para uso posterior em process_video
-                                                    cache_video(synthetic_media_id, dl_result.video_b64)
-
-                                                    logger.info(
-                                                        "[worker-%d] Link de vídeo intercetado: %s → id=%s",
-                                                        worker_id, dl_result.url, synthetic_media_id,
-                                                    )
-                                                # status "error" ou "not_video": fallback silencioso para texto
-                                        except Exception:
-                                            logger.warning(
-                                                "[worker-%d] Interceção de link de vídeo falhou, fallback para texto",
-                                                worker_id, exc_info=True,
-                                            )
+                                    # ── LINKS DE VÍDEO ──
+                                    # A detecção e download de links de vídeo (yt-dlp)
+                                    # é feita no message_handler APÓS o debounce, não aqui.
+                                    # Isso evita bloquear o worker durante downloads longos
+                                    # e garante typing indicator e tratamento de erros corretos.
 
                                     isolated_body = _build_single_message_body(
                                         body, entry_idx, change_idx, msg_idx,

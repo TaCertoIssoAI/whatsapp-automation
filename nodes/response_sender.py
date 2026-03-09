@@ -116,10 +116,11 @@ async def send_audio_response(state: WorkflowState) -> WorkflowState:
         return {}  # type: ignore[return-value]
 
     try:
-        await whatsapp_api.send_text(remote_jid, "🗣️🎤 Estou gravando o áudio da resposta...")
-        # Reativar typing indicator para a gravação do áudio
-        if msg_id:
-            await whatsapp_api.send_typing_indicator(msg_id)
+        await whatsapp_api.send_text(
+            remote_jid,
+            "🗣️🎤 Estou gravando o áudio da resposta...",
+            keep_typing=True,
+        )
         audio_bytes = await ai_services.generate_tts(response_text)
         await whatsapp_api.send_audio(remote_jid, audio_bytes)
     except Exception:
@@ -188,8 +189,13 @@ async def handle_document_unsupported(state: WorkflowState) -> WorkflowState:
 
 
 async def mark_as_read_node(state: WorkflowState) -> WorkflowState:
-    """Marca a mensagem como lida."""
-    msg_id = state.get("id_mensagem", "")
-    if msg_id:
-        await whatsapp_api.mark_as_read(msg_id)
+    """Marca a mensagem como lida (no-op se o typing indicator já marcou).
+
+    O typing indicator (disparado pelo worker) já envia status=read
+    junto com typing_indicator.type=text, então a mensagem já está
+    marcada como lida quando chega aqui. Pulamos a chamada redundante
+    para economizar ~100-300ms de latência de rede.
+    """
+    # A mensagem já foi marcada como lida pelo typing indicator.
+    # Não é necessário fazer outra chamada à API.
     return {}  # type: ignore[return-value]

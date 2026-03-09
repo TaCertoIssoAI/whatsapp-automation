@@ -1,8 +1,11 @@
 """Deteção de links de vídeo e download via yt-dlp.
 
-Deteta URLs de plataformas de vídeo (YouTube, Instagram, TikTok, Facebook,
-X/Twitter, etc.) em mensagens de texto, faz download do vídeo usando yt-dlp
-e retorna o vídeo como base64 para injeção no pipeline existente.
+Deteta URLs de plataformas de vídeo (YouTube, YouTube Shorts, Instagram
+Reels/vídeos, TikTok, Facebook, X/Twitter, etc.) em mensagens de texto,
+verifica a duração ANTES de baixar (máximo 2 minutos), faz download do
+vídeo usando yt-dlp em resolução máxima de 480p e retorna o vídeo como
+base64 para injeção no pipeline existente — tratado exatamente como um
+vídeo enviado nativamente no WhatsApp.
 """
 
 import asyncio
@@ -116,10 +119,71 @@ def _cleanup_tmp_dir(tmp_dir: str) -> None:
         pass
 
 
+# ── Resolução de info para playlists/carrosséis ──
+
+def _resolve_single_video_info(info: dict) -> dict | None:
+    """Resolve a info para um único vídeo.
+
+    Quando extract_info retorna uma playlist (ex: carrossel do Instagram),
+    seleciona a primeira entrada que seja um vídeo.  Também filtra
+    resultados que claramente não são vídeos (fotos do Instagram, etc.).
+    """
+    # Se é uma playlist (carrossel Instagram, etc.), pegar a primeira entry
+    if info.get("_type") == "playlist" or "entries" in info:
+        entries = info.get("entries")
+        if entries is None:
+            return None
+        # entries pode ser um gerador/LazyList — iterar com cuidado
+        for entry in entries:
+            if entry is None:
+                continue
+            # Verificar se é vídeo (tem duração ou formato de vídeo)
+            if entry.get("duration") is not None or entry.get("vcodec", "none") != "none":
+                return entry
+            # Verificar se tem formatos de vídeo disponíveis
+            fmts = entry.get("formats") or []
+            if any(f.get("vcodec", "none") != "none" for f in fmts):
+                return entry
+            # Entrada do tipo 'url' (lazy) — aceitar se não foi possível verificar
+            if entry.get("_type") in ("url", "url_transparent"):
+                return entry
+        return None
+
+    return info
+
+
+def _is_video_content(info: dict) -> bool:
+    """Verifica se a info extraída corresponde a conteúdo de vídeo.
+
+    Filtra fotos do Instagram, posts de texto, etc. que não contêm vídeo.
+    """
+    # Se tem duração, provavelmente é vídeo
+    if info.get("duration") is not None:
+        return True
+
+    # Se tem formatos com codec de vídeo, é vídeo
+    formats = info.get("formats", [])
+    if any(f.get("vcodec", "none") != "none" for f in formats):
+        return True
+
+    # Se o extractor indicou que é vídeo
+    if info.get("vcodec", "none") != "none":
+        return True
+
+    return False
+
+
 # ── Download síncrono (executa em thread pool) ──
 
 def _download_video_sync(url: str) -> DownloadResult:
     """Download de vídeo via yt-dlp (SÍNCRONO — executar em thread pool).
+
+    Fluxo:
+    1. extract_info(download=False) — extrai metadados sem baixar
+    2. Verifica se é vídeo (não foto/post de texto)
+    3. Verifica duração (máximo 2 minutos = 120 segundos)
+    4. process_ie_result(info, download=True) — baixa reutilizando info já extraída
+    5. Lê o arquivo, converte para base64
 
     Retorna DownloadResult com o status da operação.
     Nunca levanta exceções — todos os erros são capturados e retornados
@@ -140,8 +204,20 @@ def _download_video_sync(url: str) -> DownloadResult:
 
     output_template = os.path.join(tmp_dir, f"video_{uuid.uuid4().hex[:8]}.%(ext)s")
 
+    # Logger customizado para suprimir output do yt-dlp no stderr
+    # (redireciona para o nosso logger em nível DEBUG)
+    class _YDLLogger:
+        def debug(self, msg: str) -> None:
+            logger.debug("[ytdlp-lib] %s", msg)
+        def warning(self, msg: str) -> None:
+            logger.debug("[ytdlp-lib] %s", msg)
+        def error(self, msg: str) -> None:
+            logger.debug("[ytdlp-lib] %s", msg)
+
     ydl_opts = {
         "outtmpl": output_template,
+        "logger": _YDLLogger(),
+        # Seleção de formato: máximo 480p, preferindo mp4
         "format": (
             "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
             "bestvideo[height<=480]+bestaudio/"
@@ -154,23 +230,48 @@ def _download_video_sync(url: str) -> DownloadResult:
         "socket_timeout": 30,
         "retries": 2,
         "max_filesize": _MAX_FILESIZE,
+        # Não baixar playlists — apenas o vídeo individual
+        "noplaylist": True,
+        # Forçar saída em mp4 para compatibilidade com WhatsApp
+        "postprocessors": [{
+            "key": "FFmpegVideoConvertor",
+            "preferedformat": "mp4",
+        }],
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Fase 1: Extrair info sem download — verifica duração ANTES
+            # ════════════════════════════════════════
+            # Fase 1: Extrair info SEM download
+            # ════════════════════════════════════════
             try:
                 info = ydl.extract_info(url, download=False)
-            except Exception:
-                logger.warning("[ytdlp] Falha ao extrair info de %s", url, exc_info=True)
+            except Exception as exc:
+                logger.info("[ytdlp] Falha ao extrair info de %s: %s", url, exc)
                 return DownloadResult(status="not_video", url=url)
 
             if info is None:
                 logger.info("[ytdlp] Nenhuma info extraída para: %s", url)
                 return DownloadResult(status="not_video", url=url)
 
-            # Verificar se é realmente um vídeo (algumas páginas retornam
-            # playlists ou resultados sem duração)
+            # Resolver playlist/carrossel para um único vídeo
+            info = _resolve_single_video_info(info)
+            if info is None:
+                logger.info("[ytdlp] Nenhum vídeo encontrado (playlist/carrossel sem vídeo): %s", url)
+                return DownloadResult(status="not_video", url=url)
+
+            # Verificar se é realmente conteúdo de vídeo
+            if not _is_video_content(info):
+                logger.info("[ytdlp] Conteúdo não é vídeo (foto ou post de texto): %s", url)
+                return DownloadResult(status="not_video", url=url)
+
+            # Verificar se é live/stream
+            is_live = info.get("is_live", False)
+            if is_live:
+                logger.info("[ytdlp] Conteúdo é live/stream, ignorando: %s", url)
+                return DownloadResult(status="not_video", url=url)
+
+            # Extrair duração
             duration = 0
             raw_duration = info.get("duration")
             if raw_duration is not None:
@@ -179,13 +280,10 @@ def _download_video_sync(url: str) -> DownloadResult:
                 except (ValueError, TypeError):
                     duration = 0
 
-            # Se não tem duração e não é live, pode ser página sem vídeo
-            is_live = info.get("is_live", False)
-            if is_live:
-                logger.info("[ytdlp] Conteúdo é live/stream, ignorando: %s", url)
-                return DownloadResult(status="not_video", url=url)
-
+            # ════════════════════════════════════════
             # Verificar duração ANTES do download
+            # Máximo: 2 minutos (120 segundos)
+            # ════════════════════════════════════════
             if duration > _MAX_DURATION:
                 logger.info(
                     "[ytdlp] Vídeo muito longo: %ds > %ds para %s",
@@ -195,6 +293,7 @@ def _download_video_sync(url: str) -> DownloadResult:
                     status="duration_exceeded", url=url, duration=duration,
                 )
 
+            # Extrair descrição/legenda do vídeo
             description = (
                 info.get("description")
                 or info.get("title")
@@ -204,9 +303,11 @@ def _download_video_sync(url: str) -> DownloadResult:
             if len(description) > _MAX_DESCRIPTION_LEN:
                 description = description[:_MAX_DESCRIPTION_LEN - 3] + "..."
 
-            # Fase 2: Download
+            # ════════════════════════════════════════
+            # Fase 2: Download reutilizando info já extraída
+            # ════════════════════════════════════════
             try:
-                ydl.download([url])
+                ydl.process_ie_result(info, download=True)
             except Exception:
                 logger.warning("[ytdlp] Falha no download de %s", url, exc_info=True)
                 return DownloadResult(status="error", url=url)
@@ -217,8 +318,12 @@ def _download_video_sync(url: str) -> DownloadResult:
             for fname in os.listdir(tmp_dir):
                 fpath = os.path.join(tmp_dir, fname)
                 if os.path.isfile(fpath) and os.path.getsize(fpath) > 0:
-                    downloaded_file = fpath
-                    break
+                    # Preferir .mp4
+                    if fpath.endswith(".mp4"):
+                        downloaded_file = fpath
+                        break
+                    if downloaded_file is None:
+                        downloaded_file = fpath
         except OSError:
             logger.warning("[ytdlp] Falha ao listar ficheiros em %s", tmp_dir)
             return DownloadResult(status="error", url=url)

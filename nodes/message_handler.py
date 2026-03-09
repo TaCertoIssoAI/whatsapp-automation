@@ -105,6 +105,20 @@ async def _clear_pending_messages(phone: str) -> None:
     await r.delete(_pending_key(phone))
 
 
+async def _clear_processed_pending(phone: str, count: int) -> None:
+    """Remove as primeiras `count` mensagens da fila de pendentes.
+
+    Mensagens que chegaram DEPOIS do batch ter sido lido ficam preservadas.
+    Usa LTRIM para manter apenas as mensagens a partir de `count`.
+    """
+    r = await _get_redis()
+    key = _pending_key(phone)
+    if count <= 0:
+        return
+    # LTRIM mantém [count .. -1], ou seja, remove os primeiros `count` itens
+    await r.ltrim(key, count, -1)
+
+
 async def _increment_debounce_version(phone: str) -> int:
     """Incrementa e retorna a versão do debounce (para detectar interrupção)."""
     r = await _get_redis()
@@ -450,6 +464,24 @@ async def _debounce_and_classify(
     finally:
         await _clear_processing(phone)
 
+        # ── Re-check: se novas mensagens chegaram durante o processamento,
+        # precisamos iniciar um NOVO ciclo de debounce para elas.
+        # Sem isso, mensagens adicionadas enquanto _is_processing era True
+        # (e o handler retornou cedo) ficam órfãs no Redis e nunca processadas.
+        remaining = await _get_pending_messages(phone)
+        if remaining:
+            logger.info(
+                "[debounce] %d mensagem(ns) órfã(s) encontrada(s) para %s após processamento, "
+                "reiniciando ciclo de debounce",
+                len(remaining), phone[-4:],
+            )
+            new_version = await _get_debounce_version(phone)
+            # Disparar um novo ciclo (fire-and-forget) para processar as mensagens restantes
+            asyncio.create_task(
+                _debounce_and_classify(phone, new_version, process_message_callback),
+                name=f"recheck-{phone[-4:]}",
+            )
+
 
 async def _classify_and_act(
     phone: str,
@@ -483,6 +515,15 @@ async def _classify_and_act(
             len(pending), phone[-4:], attempt + 1,
         )
 
+        # Log detalhado do batch para diagnóstico
+        for idx, m in enumerate(pending):
+            m_type = m.get("type", "?")
+            m_text = m.get("text", "")
+            logger.info(
+                "[classify] Batch[%d]: type=%s, text_len=%d, text_preview=%s",
+                idx, m_type, len(m_text), repr(m_text[:60]) if m_text else "(vazio)",
+            )
+
         # ── Verificar se há mídia no batch ──
         has_media = any(m.get("type") in media_types for m in pending)
         # Document é tratado como "não suportado" — se é a ÚNICA coisa, passa pelo pipeline
@@ -491,6 +532,50 @@ async def _classify_and_act(
             and any(m.get("type") == "document" for m in pending)
             and all(m.get("type") in ("document", "text", "interactive", "button") for m in pending)
         )
+
+        # ── Verificar se há link de vídeo no texto ──
+        # Se o batch é só texto e contém uma URL de plataforma de vídeo,
+        # faz download via yt-dlp e processa como vídeo — NÃO classifica com Gemini.
+        if not has_media and not has_only_document:
+            try:
+                from nodes.video_link_downloader import extract_video_url
+                video_url_found = None
+                video_url_msg = None
+                for m in reversed(pending):
+                    text = m.get("text", "")
+                    if text:
+                        url = extract_video_url(text)
+                        if url:
+                            video_url_found = url
+                            video_url_msg = m
+                            break
+                if video_url_found and video_url_msg:
+                    logger.info(
+                        "[classify] Link de vídeo detectado no texto para %s: %s",
+                        phone[-4:], video_url_found[:60],
+                    )
+                    try:
+                        await _handle_video_link(
+                            phone, pending, video_url_msg, video_url_found,
+                            process_message_callback,
+                        )
+                        return
+                    except Exception:
+                        logger.exception(
+                            "[classify] ERRO em _handle_video_link para %s, fazendo fallback para texto",
+                            phone[-4:],
+                        )
+                        # Fallback: processar como texto se _handle_video_link falhar
+                else:
+                    logger.info(
+                        "[classify] Nenhum link de vídeo encontrado no batch de %d msg(s) para %s",
+                        len(pending), phone[-4:],
+                    )
+            except Exception:
+                logger.exception(
+                    "[classify] ERRO na deteção de link de vídeo para %s, prosseguindo com classificação",
+                    phone[-4:],
+                )
 
         if has_media:
             # ══════════════════════════════════════════
@@ -513,7 +598,7 @@ async def _classify_and_act(
                     doc_msg = m
                     break
             if doc_msg:
-                await _clear_pending_messages(phone)
+                await _clear_processed_pending(phone, len(pending))
                 isolated_body = doc_msg.get("isolated_body", {})
                 msg_id = doc_msg.get("msg_id", "")
                 await process_message_callback(isolated_body, msg_id, phone)
@@ -523,6 +608,15 @@ async def _classify_and_act(
         #  BATCH SÓ TEXTO → classificar com Gemini
         # ══════════════════════════════════════════
         messages_text = _format_pending_for_prompt(pending)
+
+        # Renovar typing indicator antes da chamada ao Gemini
+        # (o debounce de 1s pode ter deixado o typing expirar)
+        last_msg_id = pending[-1].get("msg_id", "") if pending else ""
+        if last_msg_id:
+            try:
+                await whatsapp_api.send_typing_indicator(last_msg_id)
+            except Exception:
+                pass
 
         # Chamar Gemini para classificar
         try:
@@ -624,7 +718,7 @@ async def _classify_and_act(
                     )
                 except Exception:
                     logger.warning("[classify] Falha ao enviar aviso de limite para %s", phone[-4:])
-                await _clear_pending_messages(phone)
+                await _clear_processed_pending(phone, len(pending))
                 return
 
             # ── Gerar resposta de chat ──
@@ -674,12 +768,14 @@ async def _classify_and_act(
             # Salvar resposta do bot no histórico
             await _add_to_chat_history(phone, "bot", response_text)
 
-            # Limpar mensagens pendentes
-            await _clear_pending_messages(phone)
+            # Remover apenas as mensagens que faziam parte deste batch
+            await _clear_processed_pending(phone, len(pending))
             return
 
     logger.warning("[classify] Máximo de tentativas (%d) atingido para %s", max_retries, phone[-4:])
-    # Limpar pendentes para não ficar em estado inconsistente
+    # Limpar TODAS as pendentes para não ficar em loop infinito.
+    # (Diferente dos outros caminhos, aqui nenhuma mensagem foi processada
+    # com sucesso — o loop esgotou por interrupções constantes.)
     await _clear_pending_messages(phone)
 
 
@@ -817,8 +913,201 @@ async def _handle_batch_with_media(
     # Processar via LangGraph (pipeline existente cuida de rate limit, etc.)
     await process_message_callback(isolated_body, msg_id, phone)
 
-    # Limpar mensagens pendentes APÓS o processamento
-    await _clear_pending_messages(phone)
+    # Remover apenas as mensagens que faziam parte deste batch.
+    # Mensagens que chegaram DURANTE o processamento ficam preservadas
+    # e serão processadas num novo ciclo de debounce.
+    await _clear_processed_pending(phone, len(pending))
+
+
+async def _handle_video_link(
+    phone: str,
+    pending: list[dict],
+    video_msg: dict,
+    video_url: str,
+    process_message_callback,
+) -> None:
+    """Processa um link de vídeo detectado no texto via yt-dlp.
+
+    Faz download do vídeo, cacheia-o, e transforma a mensagem em tipo
+    "video" para o pipeline LangGraph processar normalmente.
+
+    Se o download falhar, informa o usuário e processa como texto.
+    """
+    import uuid
+    from contextlib import suppress
+    from nodes import whatsapp_api
+    from nodes.video_link_downloader import (
+        try_download_video_from_url,
+        cache_video,
+    )
+
+    msg_id = video_msg.get("msg_id", "")
+    msg_text = video_msg.get("text", "")
+
+    logger.info(
+        "[video-link] Iniciando download para %s: url=%s, msg_id=%s",
+        phone[-4:], video_url[:60], msg_id[:20],
+    )
+
+    # ── Typing indicator + mark-as-read IMEDIATO ──
+    if msg_id:
+        # Disparar typing e mark-as-read em paralelo (não sequencial)
+        await whatsapp_api.send_typing_indicator(msg_id)
+        # Registrar o message_id no dicionário de typing para que
+        # send_text(keep_typing=True) possa re-ativar o typing após
+        # enviar mensagens intermediárias (ex: "Estou analisando o vídeo...")
+        whatsapp_api._typing_message_ids[phone] = msg_id
+
+    # ── Download com typing keepalive ──
+    _dl_stop = asyncio.Event()
+
+    async def _dl_keepalive():
+        while not _dl_stop.is_set():
+            try:
+                await asyncio.wait_for(_dl_stop.wait(), timeout=15)
+            except asyncio.TimeoutError:
+                if not _dl_stop.is_set() and msg_id:
+                    with suppress(Exception):
+                        await whatsapp_api.send_typing_indicator(msg_id)
+
+    keepalive_task = asyncio.create_task(
+        _dl_keepalive(),
+        name=f"vdl-typing-{phone[-4:]}",
+    )
+
+    try:
+        dl_result = await try_download_video_from_url(msg_text)
+        logger.info(
+            "[video-link] Resultado do download para %s: status=%s",
+            phone[-4:], dl_result.status if dl_result else "None",
+        )
+    except Exception:
+        logger.exception("[video-link] Falha no download de %s para %s", video_url[:60], phone[-4:])
+        dl_result = None
+    finally:
+        _dl_stop.set()
+        keepalive_task.cancel()
+        with suppress(Exception):
+            await keepalive_task
+
+    if dl_result is None or dl_result.status == "error":
+        # Download falhou — informar o usuário e NÃO processar como texto
+        logger.warning("[video-link] Download falhou para %s, informando usuário %s", video_url[:60], phone[-4:])
+        try:
+            await whatsapp_api.send_text(
+                phone,
+                "⚠️ Não consegui baixar o vídeo desse link. "
+                "Tente enviar o vídeo diretamente (gravando ou anexando).",
+                quoted_message_id=msg_id or None,
+            )
+        except Exception:
+            pass
+        await _clear_processed_pending(phone, len(pending))
+        return
+
+    if dl_result.status == "not_video":
+        # URL não é um vídeo (foto do Instagram, etc.) — processar como texto normal
+        logger.info("[video-link] URL não é vídeo para %s, processando como texto", phone[-4:])
+        await _handle_verify(phone, pending, process_message_callback)
+        return
+
+    if dl_result.status == "duration_exceeded":
+        # Vídeo muito longo — informar o usuário
+        logger.info("[video-link] Vídeo excede 120s (%ds) para %s", dl_result.duration, phone[-4:])
+        try:
+            await whatsapp_api.send_text(
+                phone,
+                "Para que eu possa analizar o conteúdo do vídeo, "
+                "ele precisa ter uma duração máxima de 2 minutos.",
+                quoted_message_id=msg_id or None,
+            )
+        except Exception:
+            pass
+        await _clear_processed_pending(phone, len(pending))
+        return
+
+    # ── Download bem-sucedido → transformar em mensagem de vídeo ──
+    logger.info(
+        "[video-link] Download OK: %s, %.1f MB, %ds, para %s",
+        video_url[:60],
+        len(dl_result.video_b64) * 3 / 4 / (1024 * 1024),
+        dl_result.duration,
+        phone[-4:],
+    )
+
+    # Gerar caption: texto do utilizador (sem URL) + descrição do vídeo
+    user_text_clean = msg_text.replace(dl_result.url, "").strip()
+    caption_parts = []
+    if user_text_clean:
+        caption_parts.append(user_text_clean)
+    if dl_result.description:
+        caption_parts.append(f"[Descrição original do vídeo]: {dl_result.description}")
+
+    # Coletar textos adicionais de outras mensagens no batch
+    all_extra_texts = []
+    for m in pending:
+        if m is video_msg:
+            continue
+        t = m.get("text", "")
+        if t:
+            all_extra_texts.append(t)
+        cap = m.get("caption", "")
+        if cap:
+            all_extra_texts.append(cap)
+
+    msg_caption = "\n".join(caption_parts)
+    batch_extra = "\n".join(all_extra_texts) if all_extra_texts else ""
+
+    # Cachear o base64 e criar media_id sintético
+    synthetic_media_id = f"ytdlp_local_{uuid.uuid4().hex[:12]}"
+    cache_video(synthetic_media_id, dl_result.video_b64)
+
+    # Construir um isolated_body sintético de tipo "video"
+    isolated_body = video_msg.get("isolated_body", {})
+    try:
+        entry = isolated_body["entry"][0]
+        change = entry["changes"][0]
+        value = change["value"]
+        messages = value["messages"]
+        if messages:
+            msg_obj = messages[0]
+            msg_obj["type"] = "video"
+            msg_obj["video"] = {
+                "id": synthetic_media_id,
+                "mime_type": "video/mp4",
+                "caption": msg_caption,
+            }
+            msg_obj.pop("text", None)
+            msg_obj.pop("interactive", None)
+            msg_obj.pop("button", None)
+    except (KeyError, IndexError):
+        logger.warning("[video-link] Falha ao transformar isolated_body, construindo novo")
+        isolated_body = {
+            "object": "whatsapp_business_account",
+            "entry": [{"id": "", "changes": [{"value": {
+                "messaging_product": "whatsapp",
+                "metadata": {},
+                "contacts": [{"profile": {"name": video_msg.get("name", "")}}],
+                "messages": [{"from": phone, "id": msg_id, "type": "video", "video": {
+                    "id": synthetic_media_id, "mime_type": "video/mp4", "caption": msg_caption,
+                }}],
+            }, "field": "messages"}]}],
+        }
+
+    if batch_extra:
+        isolated_body["_batch_extra_text"] = batch_extra
+
+    # Controle de contagem
+    last_msg_ts = pending[-1].get("timestamp", 0)
+    first_msg_ts = pending[0].get("timestamp", 0)
+    if last_msg_ts - first_msg_ts < 1.0 and len(pending) > 1:
+        isolated_body["_skip_counter_increment"] = True
+
+    # Processar via LangGraph como vídeo
+    await process_message_callback(isolated_body, msg_id, phone)
+
+    # Limpar as mensagens processadas
+    await _clear_processed_pending(phone, len(pending))
 
 
 def _build_batch_status_notes(
@@ -937,8 +1226,8 @@ async def _handle_verify(
         isolated_body = msg.get("isolated_body", {})
         msg_id = msg.get("msg_id", "")
         await process_message_callback(isolated_body, msg_id, phone)
-        # Limpar mensagens pendentes APÓS o processamento
-        await _clear_pending_messages(phone)
+        # Remover apenas as mensagens que faziam parte deste batch
+        await _clear_processed_pending(phone, len(pending))
         return
 
     # Múltiplas mensagens — concatenar textos e usar o body da última mensagem
@@ -985,8 +1274,8 @@ async def _handle_verify(
 
     await process_message_callback(isolated_body, msg_id, phone)
 
-    # Limpar mensagens pendentes APÓS o processamento
-    await _clear_pending_messages(phone)
+    # Remover apenas as mensagens que faziam parte deste batch
+    await _clear_processed_pending(phone, len(pending))
 
 
 async def save_bot_response_to_history(phone: str, response: str) -> None:

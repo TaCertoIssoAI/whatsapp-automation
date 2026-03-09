@@ -149,6 +149,9 @@ def build_graph() -> StateGraph:
     graph.add_edge("handle_greeting", END)
 
     # mark_as_read_direct → Switch6 (roteamento por tipo de mensagem)
+    # NOTE: A mensagem já foi marcada como lida pelo typing indicator
+    # (que envia status=read), mas mantemos o nó para preservar a
+    # estrutura do grafo e garantir compatibilidade.
     graph.add_conditional_edges("mark_as_read_direct", route_direct_message)
 
     # ── Processamento direto (Switch6) → Resposta ──

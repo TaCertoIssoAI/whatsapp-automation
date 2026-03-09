@@ -24,16 +24,22 @@ _RETRY_DELAYS = [1, 2, 4]
 # When send_text/send_audio delivers a message, we set the event so
 # the keepalive task stops immediately (no stale "typing..." after reply).
 _typing_stop_events: dict[str, asyncio.Event] = {}
+# Maps recipient phone → original message_id (wamid) used for typing indicator.
+# Needed so send_text(keep_typing=True) can re-fire the indicator after sending.
+_typing_message_ids: dict[str, str] = {}
 
 
-def register_typing_stop_event(recipient: str, event: asyncio.Event) -> None:
+def register_typing_stop_event(recipient: str, event: asyncio.Event, message_id: str = "") -> None:
     """Registra um Event para parar o typing keepalive de um destinatário."""
     _typing_stop_events[recipient] = event
+    if message_id:
+        _typing_message_ids[recipient] = message_id
 
 
 def unregister_typing_stop_event(recipient: str) -> None:
     """Remove o Event de typing de um destinatário."""
     _typing_stop_events.pop(recipient, None)
+    _typing_message_ids.pop(recipient, None)
 
 
 def _stop_typing_for(recipient: str) -> None:
@@ -172,15 +178,20 @@ async def send_text(
     remote_jid: str,
     text: str,
     quoted_message_id: str | None = None,
+    *,
+    keep_typing: bool = False,
 ) -> dict:
     """Envia mensagem de texto. Divide automaticamente se > 4096 chars.
 
     Automaticamente para o typing keepalive para este destinatário
-    assim que a primeira parte da mensagem é enviada.
+    assim que a primeira parte da mensagem é enviada — a menos que
+    ``keep_typing=True`` (usado para mensagens intermediárias como
+    "Estou analisando …" onde o typing deve continuar).
     """
     # Parar typing indicator ANTES de enviar (a mensagem em si já cancela
     # o indicador no lado do WhatsApp, mas paramos o keepalive loop no nosso lado)
-    _stop_typing_for(remote_jid)
+    if not keep_typing:
+        _stop_typing_for(remote_jid)
 
     chunks = _split_text(text)
     last_result = {}
@@ -198,6 +209,42 @@ async def send_text(
 
         resp = await _request_with_retry("POST", _messages_url(), json=body, headers=_headers())
         last_result = resp.json()
+
+    # Quando keep_typing=True, re-disparar o typing indicator após enviar
+    # a mensagem, pois o WhatsApp cancela o indicador ao entregar a mensagem.
+    #
+    # Estratégia: disparo DUPLO com delays escalonados para maximizar a
+    # chance do typing reaparecer antes que o usuário perceba o gap.
+    # O primeiro disparo (0.5s) cobre o caso normal; o segundo (1.5s) é
+    # uma rede de segurança caso o primeiro chegue cedo demais (antes do
+    # WhatsApp processar a entrega da mensagem que cancela o typing).
+    if keep_typing:
+        wamid = _typing_message_ids.get(remote_jid, "")
+        if wamid:
+            async def _refire_typing():
+                try:
+                    await asyncio.sleep(0.5)
+                    await send_typing_indicator(wamid)
+                    logger.info("[typing] Re-fire 1/2 OK para %s (wamid=%s)", remote_jid[-4:], wamid[:20])
+                except Exception as e:
+                    logger.warning("[typing] Re-fire 1/2 falhou para %s: %s", remote_jid[-4:], e)
+                try:
+                    await asyncio.sleep(1.0)
+                    # Verificar se o typing não foi parado (stop event settado)
+                    ev = _typing_stop_events.get(remote_jid)
+                    if ev is None or not ev.is_set():
+                        await send_typing_indicator(wamid)
+                        logger.info("[typing] Re-fire 2/2 OK para %s", remote_jid[-4:])
+                except Exception:
+                    pass
+            try:
+                asyncio.get_running_loop().create_task(
+                    _refire_typing(), name=f"refire-typing-{remote_jid[-4:]}"
+                )
+            except RuntimeError:
+                pass
+        else:
+            logger.warning("[typing] keep_typing=True mas sem wamid registrado para %s", remote_jid[-4:])
 
     return last_result
 
@@ -239,11 +286,21 @@ async def send_audio(remote_jid: str, audio_bytes: bytes) -> dict:
 # ── Marcar como Lida ──
 
 async def mark_as_read(message_id: str) -> None:
-    body = {
+    """Marca mensagem como lida, preservando o typing indicator se ativo.
+
+    Se há um typing indicator ativo para o destinatário desta mensagem,
+    inclui o campo typing_indicator no payload para NÃO cancelar o
+    indicador de digitação. Caso contrário, envia mark-as-read simples.
+    """
+    body: dict = {
         "messaging_product": "whatsapp",
         "status": "read",
         "message_id": message_id,
     }
+    # Se há typing ativo para algum recipient que usa este message_id,
+    # incluir typing_indicator para não cancelar o indicador.
+    if message_id and message_id in _typing_message_ids.values():
+        body["typing_indicator"] = {"type": "text"}
     try:
         await _request_with_retry("POST", _messages_url(), json=body, headers=_headers())
     except Exception:
@@ -294,7 +351,7 @@ async def send_typing_indicator(message_id: str) -> None:
     mensagem, o que vier primeiro.
 
     Requer o message_id (wamid) da mensagem recebida do usuário.
-    Best-effort — erros são silenciados.
+    Best-effort — erros são logados em DEBUG para facilitar diagnóstico.
     """
     if not message_id:
         return
@@ -307,9 +364,16 @@ async def send_typing_indicator(message_id: str) -> None:
     }
     try:
         client = _get_client()
-        await client.post(_messages_url(), json=body, headers=_headers())
-    except Exception:
-        pass  # Typing indicator é best-effort
+        resp = await client.post(_messages_url(), json=body, headers=_headers())
+        if resp.status_code != 200:
+            logger.warning(
+                "Typing indicator retornou status %d para msg %s: %s",
+                resp.status_code, message_id[:30], resp.text[:200],
+            )
+        else:
+            logger.info("[typing] Indicator enviado OK para msg %s", message_id[:20])
+    except Exception as exc:
+        logger.warning("Typing indicator falhou para msg %s: %s", message_id[:30], exc)
 
 
 def typing_indicator_fire_and_forget(message_id: str) -> None:

@@ -105,9 +105,8 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
             remote_jid,
             status_msg,
             quoted_message_id=msg_id,
+            keep_typing=True,
         )
-        # Reativar typing indicator após enviar msg de status (fire-and-forget)
-        whatsapp_api.typing_indicator_fire_and_forget(msg_id)
     except Exception:
         pass  # Status message is not critical
 
@@ -156,6 +155,14 @@ async def process_text(state: WorkflowState) -> WorkflowState:
     msg_id = state.get("id_mensagem", "")
     mensagem = state.get("mensagem", "")
 
+    logger.info(
+        "process_text: jid=%s, msg_id=%s, msg_len=%d, msg_preview=%s",
+        remote_jid[-4:] if remote_jid else "?",
+        msg_id[:20] if msg_id else "?",
+        len(mensagem) if mensagem else 0,
+        repr(mensagem[:80]) if mensagem else "?",
+    )
+
     if not remote_jid or not mensagem:
         logger.error("process_text: dados insuficientes (jid=%s, msg=%s)", remote_jid, bool(mensagem))
         return {"rationale": ""}  # type: ignore[return-value]
@@ -172,9 +179,8 @@ async def process_text(state: WorkflowState) -> WorkflowState:
             remote_jid,
             status_msg,
             quoted_message_id=msg_id,
+            keep_typing=True,
         )
-        # Reativar typing indicator após enviar msg de status (fire-and-forget)
-        whatsapp_api.typing_indicator_fire_and_forget(msg_id)
     except Exception:
         pass
 
@@ -214,9 +220,8 @@ async def process_image(state: WorkflowState) -> WorkflowState:
             remote_jid,
             status_msg,
             quoted_message_id=msg_id,
+            keep_typing=True,
         )
-        # Reativar typing indicator após enviar msg de status (fire-and-forget)
-        whatsapp_api.typing_indicator_fire_and_forget(msg_id)
     except Exception:
         pass
 
@@ -290,6 +295,14 @@ async def process_video(state: WorkflowState) -> WorkflowState:
     msg_id = state.get("id_mensagem", "")
     media_id = state.get("media_id", "")
 
+    logger.info(
+        "process_video: jid=%s, msg_id=%s, media_id=%s, is_ytdlp=%s",
+        remote_jid[-4:] if remote_jid else "?",
+        msg_id[:20] if msg_id else "?",
+        media_id[:30] if media_id else "?",
+        media_id.startswith("ytdlp_local_") if media_id else False,
+    )
+
     if not remote_jid or not media_id:
         logger.error("process_video: dados insuficientes (jid=%s, media=%s)", remote_jid, media_id)
         return {"rationale": ""}  # type: ignore[return-value]
@@ -306,9 +319,8 @@ async def process_video(state: WorkflowState) -> WorkflowState:
             remote_jid,
             status_msg,
             quoted_message_id=msg_id,
+            keep_typing=True,
         )
-        # Reativar typing indicator após enviar msg de status (fire-and-forget)
-        whatsapp_api.typing_indicator_fire_and_forget(msg_id)
     except Exception:
         pass
 
