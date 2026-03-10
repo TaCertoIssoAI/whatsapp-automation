@@ -98,6 +98,65 @@ def is_ytdlp_media_id(media_id: str) -> bool:
     return media_id.startswith("ytdlp_local_")
 
 
+# ── Diagnóstico do yt-dlp (executado uma única vez) ──
+
+_ytdlp_diag_done = False
+
+
+def _log_ytdlp_diagnostics() -> None:
+    """Loga informações de diagnóstico do yt-dlp (versão, plugins, JS runtime)."""
+    global _ytdlp_diag_done
+    if _ytdlp_diag_done:
+        return
+    _ytdlp_diag_done = True
+
+    try:
+        import yt_dlp
+        logger.info("[ytdlp-diag] yt-dlp versão: %s", yt_dlp.version.__version__)
+    except Exception as e:
+        logger.error("[ytdlp-diag] Falha ao importar yt-dlp: %s", e)
+        return
+
+    # Verificar se yt-dlp-ejs está instalado
+    try:
+        import importlib
+        ejs_spec = importlib.util.find_spec("yt_dlp_ejs")
+        if ejs_spec:
+            logger.info("[ytdlp-diag] yt-dlp-ejs: INSTALADO (%s)", ejs_spec.origin)
+        else:
+            logger.warning("[ytdlp-diag] yt-dlp-ejs: NÃO ENCONTRADO — YouTube pode falhar!")
+    except Exception:
+        logger.warning("[ytdlp-diag] yt-dlp-ejs: não foi possível verificar")
+
+    # Verificar se bgutil plugin está instalado
+    try:
+        bgutil_spec = importlib.util.find_spec("yt_dlp_plugins")
+        logger.info("[ytdlp-diag] yt_dlp_plugins dir: %s", bgutil_spec.submodule_search_locations if bgutil_spec else "N/A")
+    except Exception:
+        pass
+
+    # Verificar se Deno está disponível
+    import shutil as _shutil
+    deno_path = _shutil.which("deno")
+    node_path = _shutil.which("node")
+    if deno_path:
+        logger.info("[ytdlp-diag] JS runtime Deno: %s", deno_path)
+    elif node_path:
+        logger.info("[ytdlp-diag] JS runtime Node: %s", node_path)
+    else:
+        logger.warning(
+            "[ytdlp-diag] NENHUM JS runtime (deno/node) encontrado! "
+            "YouTube requer JS runtime desde yt-dlp 2025.11.12"
+        )
+
+    # Verificar POT_PROVIDER_URL
+    pot_url = os.environ.get("POT_PROVIDER_URL", "")
+    if pot_url:
+        logger.info("[ytdlp-diag] POT_PROVIDER_URL: %s", pot_url)
+    else:
+        logger.info("[ytdlp-diag] POT_PROVIDER_URL: não configurado (usando padrão 127.0.0.1:4416)")
+
+
 # ── Deteção de URLs ──
 
 def extract_video_url(text: str) -> str | None:
@@ -196,6 +255,9 @@ def _download_video_sync(url: str) -> DownloadResult:
         logger.error("[ytdlp] yt-dlp não instalado")
         return DownloadResult(status="error", url=url)
 
+    # Diagnóstico na primeira execução
+    _log_ytdlp_diagnostics()
+
     try:
         tmp_dir = tempfile.mkdtemp(prefix="ytdlp_")
     except Exception:
@@ -204,19 +266,46 @@ def _download_video_sync(url: str) -> DownloadResult:
 
     output_template = os.path.join(tmp_dir, f"video_{uuid.uuid4().hex[:8]}.%(ext)s")
 
-    # Logger customizado para suprimir output do yt-dlp no stderr
-    # (redireciona para o nosso logger em nível DEBUG)
+    # Logger customizado para capturar output do yt-dlp
+    # Redireciona para o nosso logger — mensagens de debug do yt-dlp contêm
+    # informações vitais sobre PO Token, EJS, plugins e JS runtime
     class _YDLLogger:
         def debug(self, msg: str) -> None:
-            logger.debug("[ytdlp-lib] %s", msg)
+            # Mensagens com [pot], [ejs], [debug] são importantes para diagnóstico
+            if any(kw in msg.lower() for kw in ("[pot", "[ejs", "po token", "js runtime", "javascript")):
+                logger.info("[ytdlp-lib] %s", msg)
+            else:
+                logger.debug("[ytdlp-lib] %s", msg)
         def warning(self, msg: str) -> None:
-            logger.debug("[ytdlp-lib] %s", msg)
+            logger.warning("[ytdlp-lib] %s", msg)
         def error(self, msg: str) -> None:
-            logger.debug("[ytdlp-lib] %s", msg)
+            logger.warning("[ytdlp-lib] %s", msg)
+
+    # ── Extractor args para YouTube ──
+    # Usar 'mweb' como player client — é mais leve e funciona bem com PO Token.
+    # Se o plugin bgutil-ytdlp-pot-provider estiver instalado, ele gera
+    # PO Tokens automaticamente via HTTP server (porta 4416 por padrão).
+    # NOTA: usar "player-client" (com hífen) — é o formato correto para yt-dlp recente.
+    _yt_extractor_args = {
+        "youtube": [
+            "player-client=mweb,default",
+        ],
+    }
+
+    # Se a env var POT_PROVIDER_URL estiver definida, configurar o plugin
+    pot_url = os.environ.get("POT_PROVIDER_URL", "")
+    if pot_url:
+        _yt_extractor_args["youtubepot-bgutilhttp"] = [
+            f"base_url={pot_url}",
+        ]
+        logger.debug("[ytdlp] PO Token provider configurado: %s", pot_url)
 
     ydl_opts = {
         "outtmpl": output_template,
         "logger": _YDLLogger(),
+        # Verbose = True para que yt-dlp logue informações de PO Token,
+        # EJS, plugins e JS runtime (capturado pelo nosso logger)
+        "verbose": True,
         # Seleção de formato: máximo 480p, preferindo mp4
         "format": (
             "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
@@ -232,6 +321,8 @@ def _download_video_sync(url: str) -> DownloadResult:
         "max_filesize": _MAX_FILESIZE,
         # Não baixar playlists — apenas o vídeo individual
         "noplaylist": True,
+        # Extractor args: player client mweb + PO Token provider
+        "extractor_args": _yt_extractor_args,
         # Forçar saída em mp4 para compatibilidade com WhatsApp
         "postprocessors": [{
             "key": "FFmpegVideoConvertor",
@@ -247,7 +338,25 @@ def _download_video_sync(url: str) -> DownloadResult:
             try:
                 info = ydl.extract_info(url, download=False)
             except Exception as exc:
+                exc_str = str(exc)
                 logger.info("[ytdlp] Falha ao extrair info de %s: %s", url, exc)
+                # Distinguir erro de bot detection / autenticação do YouTube
+                # de outros erros (URL inválida, etc.)
+                _bot_keywords = (
+                    "Sign in to confirm",
+                    "not a bot",
+                    "cookies",
+                    "authentication",
+                    "HTTP Error 403",
+                    "403",
+                )
+                if any(kw.lower() in exc_str.lower() for kw in _bot_keywords):
+                    logger.warning(
+                        "[ytdlp] YouTube bloqueou o download (bot detection) para %s. "
+                        "Verifique se o PO Token provider está ativo.",
+                        url,
+                    )
+                    return DownloadResult(status="error", url=url)
                 return DownloadResult(status="not_video", url=url)
 
             if info is None:

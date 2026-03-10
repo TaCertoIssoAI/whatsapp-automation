@@ -15,6 +15,13 @@ services:
       timeout: 5s
       retries: 3
 
+  # PO Token provider para yt-dlp (bypass YouTube bot detection)
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    container_name: whatsapp-pot-provider
+    restart: unless-stopped
+    init: true
+
   whatsapp-bot:
     build: .
     container_name: whatsapp-integration
@@ -23,6 +30,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      pot-provider:
+        condition: service_started
     env_file:
       - .env
     ports:
@@ -57,6 +66,9 @@ services:
       
       # Redis
       - REDIS_URL=redis://redis:6379/0
+      
+      # PO Token provider para yt-dlp (YouTube)
+      - POT_PROVIDER_URL=http://pot-provider:4416
       
       # Servidor
       - WEBHOOK_PORT=${WEBHOOK_PORT:-5000}

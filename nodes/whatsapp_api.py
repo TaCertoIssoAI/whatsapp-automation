@@ -213,33 +213,42 @@ async def send_text(
     # Quando keep_typing=True, re-disparar o typing indicator após enviar
     # a mensagem, pois o WhatsApp cancela o indicador ao entregar a mensagem.
     #
-    # Estratégia: disparo DUPLO com delays escalonados para maximizar a
-    # chance do typing reaparecer antes que o usuário perceba o gap.
-    # O primeiro disparo (0.5s) cobre o caso normal; o segundo (1.5s) é
-    # uma rede de segurança caso o primeiro chegue cedo demais (antes do
-    # WhatsApp processar a entrega da mensagem que cancela o typing).
+    # Estratégia: loop contínuo que re-dispara o typing a cada ~3s até
+    # que o _typing_stop event seja settado (= próxima mensagem enviada
+    # sem keep_typing, ou processamento concluído).
+    # O primeiro re-fire acontece após 1s (dar tempo ao WhatsApp para
+    # processar a entrega da mensagem que cancela o typing).
+    # Re-fires subsequentes a cada 3s mantêm o indicador vivo.
     if keep_typing:
         wamid = _typing_message_ids.get(remote_jid, "")
         if wamid:
-            async def _refire_typing():
+            async def _refire_typing_loop():
                 try:
-                    await asyncio.sleep(0.5)
-                    await send_typing_indicator(wamid)
-                    logger.info("[typing] Re-fire 1/2 OK para %s (wamid=%s)", remote_jid[-4:], wamid[:20])
-                except Exception as e:
-                    logger.warning("[typing] Re-fire 1/2 falhou para %s: %s", remote_jid[-4:], e)
-                try:
+                    # Esperar 1s após envio — o WhatsApp precisa processar
+                    # a entrega da mensagem antes de aceitar novo typing
                     await asyncio.sleep(1.0)
-                    # Verificar se o typing não foi parado (stop event settado)
                     ev = _typing_stop_events.get(remote_jid)
-                    if ev is None or not ev.is_set():
+                    if ev is not None and ev.is_set():
+                        return
+                    await send_typing_indicator(wamid)
+                    logger.info("[typing] Re-fire pós-envio OK para %s (wamid=%s)", remote_jid[-4:], wamid[:20])
+                except Exception as e:
+                    logger.warning("[typing] Re-fire pós-envio falhou para %s: %s", remote_jid[-4:], e)
+                    return
+                # Loop de manutenção: re-fire a cada 3s enquanto keep_typing ativo
+                while True:
+                    try:
+                        await asyncio.sleep(3.0)
+                        ev = _typing_stop_events.get(remote_jid)
+                        if ev is None or ev.is_set():
+                            return
                         await send_typing_indicator(wamid)
-                        logger.info("[typing] Re-fire 2/2 OK para %s", remote_jid[-4:])
-                except Exception:
-                    pass
+                        logger.debug("[typing] Re-fire loop OK para %s", remote_jid[-4:])
+                    except Exception:
+                        return
             try:
                 asyncio.get_running_loop().create_task(
-                    _refire_typing(), name=f"refire-typing-{remote_jid[-4:]}"
+                    _refire_typing_loop(), name=f"refire-typing-{remote_jid[-4:]}"
                 )
             except RuntimeError:
                 pass

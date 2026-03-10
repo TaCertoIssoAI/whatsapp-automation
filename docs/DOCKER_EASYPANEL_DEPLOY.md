@@ -1,7 +1,15 @@
+# Comandos úteis
+
+## Criar imagem e fazer push para o dockerHub
 docker login
 ./dockerhub.sh develop
 ./dockerhub.sh production
+
+## Excluir processos em python no terminal do serviço na EasyPanel
 pkill -9 -f python
+
+## Limpar memória do docker desktop:
+docker system prune
 
 # 🚀 Deploy do WhatsApp Integration Bot no EasyPanel com Docker
 
@@ -144,6 +152,22 @@ docker push seu-usuario/whatsapp-integration:latest
    - **Service Name**: `whatsapp-integration`
    - **Docker Image**: `seu-usuario/whatsapp-integration:latest` (ou use a imagem local se fez push para o registry do EasyPanel)
    - **Port**: `5000`
+
+### 3.3.1. Adicionar serviço PO Token Provider (para download de vídeos do YouTube)
+
+O YouTube bloqueia downloads de servidores/VPS (bot detection). Para contornar isso, é necessário um serviço auxiliar que gera PO Tokens (Proof of Origin) para o yt-dlp.
+
+1. No mesmo projeto, clique em **"Add Service"** novamente
+2. Escolha **"Docker"** ou **"Custom Docker Image"**
+3. Configure:
+   - **Service Name**: `pot-provider`
+   - **Docker Image**: `brainicism/bgutil-ytdlp-pot-provider:latest`
+   - Não é necessário expor porta externamente (apenas comunicação interna)
+4. Na seção de variáveis de ambiente do serviço `whatsapp-integration`, adicione:
+   ```
+   POT_PROVIDER_URL=http://pot-provider:4416
+   ```
+   > **Nota**: O hostname `pot-provider` é o nome do serviço no EasyPanel. Ajuste se usar um nome diferente.
 
 ### 3.4. Configurar variáveis de ambiente
 
