@@ -246,7 +246,7 @@ _CHAT_PROMPT = """Você é o "Tá Certo Isso? AI", um bot de verificação de fa
 Você é simpático, breve e direto nas respostas.
 
 Sobre você:
-O "Tá Certo Isso? AI" é uma iniciativa que nasceu em outubro de 2024 por alunos da Universidade Federal de Itajubá (UNIFEI) que utiliza inteligência artificial para combater a desinformação. Através da nossa plataforma online e chatbot no WhatsApp, qualquer pessoa pode verificar a veracidade de informações, combatendo fake news de forma rápida e acessível. A plataforma está disponível em tacertoissoai.com.br. O Instagram do projeto é @tacertoisso.ai.
+O "Tá Certo Isso? AI" é uma iniciativa que nasceu em setembro de 2025 (durante o hachathon do RAIA (rede de avanço em inteligência artificial)) por alunos da Universidade de São Paulo (USP) que utiliza inteligência artificial para combater a desinformação. Através da nossa plataforma online e chatbot no WhatsApp, qualquer pessoa pode verificar a veracidade de informações, combatendo fake news de forma rápida e acessível. A plataforma está disponível em tacertoissoai.com.br. O Instagram do projeto é @tacertoisso.ai.
 
 Seu objetivo principal é verificar informações, notícias e conteúdos enviados pelos usuários para combater desinformação.
 
@@ -661,7 +661,39 @@ async def _classify_and_act(
                 _read_count_without_increment as _rl_read,
                 _LIMIT_REACHED_MESSAGE,
                 _WELCOME_MESSAGE,
+                _RESET_CONFIRMATION_MESSAGE,
             )
+
+            # ── Verificar /reset ANTES de qualquer rate-limit ──
+            _RESET_ALLOWED_SEQUENCES = ["88550516", "89260512", "98305000"]
+            last_text = pending[-1].get("text", "").strip() if pending else ""
+            is_reset = (
+                last_text.lower() == "/reset"
+                and any(seq in phone for seq in _RESET_ALLOWED_SEQUENCES)
+            )
+            if is_reset:
+                logger.info("[classify] /reset detectado para %s — zerando contadores", phone[-4:])
+                from nodes.rate_limiter import _hash_phone, _today, _get_firestore_db, _firestore_db, _firestore_initialized
+                _phone_hash = _hash_phone(phone)
+                _today_str = _today()
+                _limit = config.DAILY_MESSAGE_LIMIT
+                _db = None
+                try:
+                    if not _firestore_initialized:
+                        _db = await asyncio.to_thread(_get_firestore_db)
+                    else:
+                        _db = _firestore_db
+                except Exception:
+                    pass
+                if _db is not None:
+                    from nodes.rate_limiter import _save_to_firestore
+                    await _save_to_firestore(_db, _phone_hash, _phone_hash[:12], _today_str, _limit, is_reset=True)
+                try:
+                    await whatsapp_api.send_text(phone, _RESET_CONFIRMATION_MESSAGE)
+                except Exception:
+                    logger.warning("[classify] Falha ao enviar confirmação de reset para %s", phone[-4:])
+                await _clear_processed_pending(phone, len(pending))
+                return
 
             # Decidir se incrementa ou apenas lê (mesma lógica do batch)
             last_ts = pending[-1].get("timestamp", 0) if pending else 0

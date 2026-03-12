@@ -11,6 +11,10 @@ pkill -9 -f python
 ## Limpar memória do docker desktop:
 docker system prune
 
+## Docker
+docker build --no-cache -t tacertoissoai/whatsapp-integration:production .
+docker push tacertoissoai/whatsapp-integration:production
+
 # 🚀 Deploy do WhatsApp Integration Bot no EasyPanel com Docker
 
 Este guia completo explica como containerizar a aplicação e fazer deploy no EasyPanel para manter o bot rodando 24/7.
