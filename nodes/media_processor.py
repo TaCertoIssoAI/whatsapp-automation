@@ -1,4 +1,15 @@
-"""Processamento de mídia: áudio, imagem e vídeo."""
+"""Processamento de mídia: áudio, imagem e vídeo.
+
+Cada função de processamento é um nó do LangGraph que:
+1. Envia mensagem de status ("Estou analisando...")
+2. Obtém a mídia (download via Cloud API)
+3. Processa a mídia (transcrição/análise)
+4. Chama a API de fact-checking
+5. Retorna o rationale
+
+Adaptado para a WhatsApp Business Cloud API.
+Funções de mensagens citadas em grupo (Switch9) comentadas.
+"""
 
 import asyncio
 import base64
@@ -159,9 +170,11 @@ async def process_image(state: WorkflowState) -> WorkflowState:
     try:
         image_b64 = await whatsapp_api.download_media_as_base64(media_id)
 
-        image_analysis, reverse_result = await asyncio.gather(
+        # Analisar imagem + Reverse search + Deep-fake (concorrente)
+        image_analysis, reverse_result, deepfake_results = await asyncio.gather(
             ai_services.analyze_image_content(image_b64),
             ai_services.reverse_image_search(image_b64),
+            ai_services.detect_deepfake(image_b64, filename="image.jpg"),
         )
 
         description = (
@@ -185,7 +198,9 @@ async def process_image(state: WorkflowState) -> WorkflowState:
         if text_context:
             content_parts.append({"textContent": text_context, "type": "text"})
 
-        result = await fact_checker.check_content(state["endpoint_api"], content_parts)
+        result = await fact_checker.check_content(
+            state["endpoint_api"], content_parts, deepfake_results=deepfake_results
+        )
 
         return {
             "description": description,
@@ -232,7 +247,11 @@ async def process_video(state: WorkflowState) -> WorkflowState:
             )
             return {"rationale": "", "duration": duration}  # type: ignore[return-value]
 
-        description = await ai_services.analyze_video(video_b64)
+        # Analisar vídeo com Gemini + Deep-fake (concorrente)
+        description, deepfake_results = await asyncio.gather(
+            ai_services.analyze_video(video_b64),
+            ai_services.detect_deepfake(video_b64, filename="video.mp4"),
+        )
         caption = state.get("caption", "")
         extra_text = state.get("extra_text", "")
 
@@ -248,7 +267,9 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         if text_context:
             content_parts.append({"textContent": text_context, "type": "text"})
 
-        result = await fact_checker.check_content(state["endpoint_api"], content_parts)
+        result = await fact_checker.check_content(
+            state["endpoint_api"], content_parts, deepfake_results=deepfake_results
+        )
 
         return {
             "description": description,

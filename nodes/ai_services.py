@@ -235,6 +235,42 @@ async def analyze_image_content(image_base64: str) -> str:
     return analysis
 
 
+# ──────────────────────── Deep-fake Detection ──────────────────────────
+
+
+_DEEPFAKE_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+
+
+async def detect_deepfake(media_base64: str, filename: str = "media.mp4") -> list[dict] | None:
+    """Envia mídia para o serviço de detecção de deep-fake.
+
+    Retorna a lista de resultados ou None se o serviço não estiver configurado.
+    """
+    if not config.DEEP_FAKE_SERVICE_URL:
+        logger.info("DEEP_FAKE_SERVICE_URL não configurada, pulando detecção de deep-fake.")
+        return None
+
+    url = f"{config.DEEP_FAKE_SERVICE_URL.rstrip('/')}/detect"
+    media_bytes = base64.b64decode(media_base64)
+
+    try:
+        async with httpx.AsyncClient(timeout=_DEEPFAKE_TIMEOUT) as client:
+            resp = await client.post(
+                url,
+                files={"file": (filename, media_bytes)},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        results = data.get("results", [])
+        logger.info("Deep-fake detection concluída (%d resultados)", len(results))
+        return results
+
+    except Exception as e:
+        logger.warning("Deep-fake detection falhou: %s", e)
+        return None
+
+
 # ──────────────────────── Google Cloud Vision — Reverse Image Search ──────
 # Equivalente ao sub-workflow 'reverse-search' do n8n
 

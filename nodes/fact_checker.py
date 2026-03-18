@@ -42,10 +42,24 @@ async def check_text(
 async def check_content(
     endpoint_api: str,
     content_parts: list[dict],
+    deepfake_results: list[dict] | None = None,
 ) -> dict:
-    """Envia múltiplos conteúdos para a API de fact-checking."""
+    """Envia múltiplos conteúdos para a API de fact-checking.
+
+    Usado quando há conteúdo composto (ex: imagem + legenda, vídeo + legenda).
+
+    Args:
+        endpoint_api: URL base da API.
+        content_parts: Lista de dicts com 'textContent' e 'type'.
+        deepfake_results: Resultados da detecção de deep-fake (opcional).
+
+    Returns:
+        Resposta da API com 'rationale'.
+    """
     url = f"{endpoint_api.rstrip('/')}/text"
-    payload = {"content": content_parts}
+    payload: dict = {"content": content_parts}
+    if deepfake_results is not None:
+        payload["deep-fake-verification-result"] = {"results": deepfake_results}
 
     async with await _get_fact_check_client() as client:
         resp = await client.post(

@@ -33,6 +33,9 @@ GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash-lite")
 # ──────────────────────── Google Cloud Vision API ────────────────────────
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")
 
+# ──────────────────────── Deep-fake Detection Service ────────────────────────
+DEEP_FAKE_SERVICE_URL = os.getenv("DEEP_FAKE_SERVICE_URL", "")
+
 # ──────────────────────── Fact-checking API ────────────────────────
 FACT_CHECK_API_URL = os.getenv(
     "FACT_CHECK_API_URL",
