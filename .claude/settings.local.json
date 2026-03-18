@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(/Users/caue.lira/Desktop/facul/whatsapp_api_handler/whatsapp-automation/venv/bin/pip install:*)",
+      "Bash(/Users/caue.lira/Desktop/facul/whatsapp_api_handler/whatsapp-automation/venv/bin/pytest:*)"
+    ]
+  }
+}

@@ -1,4 +1,15 @@
-"""Processamento de mídia: áudio, texto, imagem e vídeo."""
+"""Processamento de mídia: áudio, imagem e vídeo.
+
+Cada função de processamento é um nó do LangGraph que:
+1. Envia mensagem de status ("Estou analisando...")
+2. Obtém a mídia (download via Cloud API)
+3. Processa a mídia (transcrição/análise)
+4. Chama a API de fact-checking
+5. Retorna o rationale
+
+Adaptado para a WhatsApp Business Cloud API.
+Funções de mensagens citadas em grupo (Switch9) comentadas.
+"""
 
 import asyncio
 import base64
@@ -227,27 +238,12 @@ async def process_image(state: WorkflowState) -> WorkflowState:
 
     try:
         image_b64 = await whatsapp_api.download_media_as_base64(media_id)
-    except Exception:
-        logger.exception("Falha ao baixar imagem media_id=%s", media_id)
-        await _send_error(remote_jid, msg_id, "Não consegui baixar a imagem.")
-        return {"rationale": ""}  # type: ignore[return-value]
 
-    # Executar análise de imagem e pesquisa reversa EM PARALELO
-    # para reduzir o tempo total de processamento
-
-    async def _analyze():
-        return await ai_services.analyze_image_content(image_b64)
-
-    async def _reverse():
-        try:
-            return await ai_services.reverse_image_search(image_b64)
-        except Exception:
-            logger.warning("Reverse image search falhou, continuando sem ela")
-            return "Pesquisa reversa indisponível."
-
-    try:
-        image_analysis, reverse_result = await asyncio.gather(
-            _analyze(), _reverse()
+        # Analisar imagem + Reverse search + Deep-fake (concorrente)
+        image_analysis, reverse_result, deepfake_results = await asyncio.gather(
+            ai_services.analyze_image_content(image_b64),
+            ai_services.reverse_image_search(image_b64),
+            ai_services.detect_deepfake(image_b64, filename="image.jpg"),
         )
     except Exception:
         logger.exception("Falha ao analisar imagem")
@@ -275,7 +271,9 @@ async def process_image(state: WorkflowState) -> WorkflowState:
         content_parts.append({"textContent": "\n".join(extra_texts), "type": "text"})
 
     try:
-        result = await fact_checker.check_content(state.get("endpoint_api", ""), content_parts)
+        result = await fact_checker.check_content(
+            state["endpoint_api"], content_parts, deepfake_results=deepfake_results
+        )
     except Exception:
         logger.exception("Falha no fact-check da imagem")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
@@ -361,7 +359,11 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         return {"rationale": "", "duration": duration}  # type: ignore[return-value]
 
     try:
-        description = await ai_services.analyze_video(video_b64)
+        # Analisar vídeo com Gemini + Deep-fake (concorrente)
+        description, deepfake_results = await asyncio.gather(
+            ai_services.analyze_video(video_b64),
+            ai_services.detect_deepfake(video_b64, filename="video.mp4"),
+        )
     except Exception:
         logger.exception("Falha ao analisar vídeo")
         await _send_error(remote_jid, msg_id, "Não consegui analisar o vídeo.")
@@ -381,7 +383,9 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         content_parts.append({"textContent": "\n".join(extra_texts), "type": "text"})
 
     try:
-        result = await fact_checker.check_content(state.get("endpoint_api", ""), content_parts)
+        result = await fact_checker.check_content(
+            state["endpoint_api"], content_parts, deepfake_results=deepfake_results
+        )
     except Exception:
         logger.exception("Falha no fact-check do vídeo")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")

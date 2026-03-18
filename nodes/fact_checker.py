@@ -98,7 +98,11 @@ async def check_text(
 async def check_content(
     endpoint_api: str,
     content_parts: list[dict],
+    deepfake_results: list[dict] | None = None,
 ) -> dict:
+    """Envia múltiplos conteúdos para a API de fact-checking."""
     url = f"{endpoint_api.rstrip('/')}/text"
-    payload = {"content": content_parts}
+    payload: dict = {"content": content_parts}
+    if deepfake_results is not None:
+        payload["deep-fake-verification-result"] = {"results": deepfake_results}
     return await _post_with_retry(url, payload)
