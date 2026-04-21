@@ -6,6 +6,19 @@ Apenas leitura — nenhuma modificação é feita no banco de dados.
 
 import os
 import sys
+import warnings
+
+# Use string-based module filtering BEFORE importing the modules 
+# to catch the import-time warnings reliably.
+warnings.filterwarnings("ignore", module="google.*")
+warnings.filterwarnings("ignore", module="urllib3.*")
+
+# Suppress urllib3 NotOpenSSLWarning specifically, just in case
+try:
+    import urllib3
+    warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
+except ImportError:
+    pass
 
 import firebase_admin
 from firebase_admin import credentials, firestore

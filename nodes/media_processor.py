@@ -29,9 +29,13 @@ _ERROR_MSG = (
 
 async def _send_error(remote_jid: str, msg_id: str, detail: str = "") -> None:
     """Envia mensagem de erro para o usuário."""
-    text = _ERROR_MSG
-    if detail:
-        text += f"\n\nDetalhes: {detail}"
+    if detail == "O serviço de verificação está temporariamente indisponível.":
+        text = "⚠️ Desculpe, ocorreu um erro ao processar sua mensagem pois o serviço de verificação está temporariamente indisponível. Em breve o sistema voltará a funcionar normalmente."
+    else:
+        text = _ERROR_MSG
+        if detail:
+            text += f"\n\nDetalhes: {detail}"
+
     try:
         await whatsapp_api.send_text(remote_jid, text, quoted_message_id=msg_id)
     except Exception:
@@ -126,14 +130,14 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
     except Exception:
         logger.exception("Falha ao baixar áudio media_id=%s", media_id)
         await _send_error(remote_jid, msg_id, "Não consegui baixar o áudio.")
-        return {"rationale": ""}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     try:
         transcription = await ai_services.transcribe_audio(audio_b64)
     except Exception:
         logger.exception("Falha ao transcrever áudio")
         await _send_error(remote_jid, msg_id, "Não consegui transcrever o áudio.")
-        return {"rationale": ""}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     # Montar content_parts para o fact-checker
     batch_extra = state.get("batch_extra_text", "")
@@ -150,7 +154,7 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
     except Exception:
         logger.exception("Falha no fact-check do áudio")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
-        return {"rationale": ""}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     return {
         "transcription": transcription,
@@ -204,7 +208,7 @@ async def process_text(state: WorkflowState) -> WorkflowState:
     except Exception:
         logger.exception("Falha no fact-check do texto")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
-        return {"rationale": ""}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     return {"rationale": result.get("rationale", "")}  # type: ignore[return-value]
 
@@ -248,7 +252,7 @@ async def process_image(state: WorkflowState) -> WorkflowState:
     except Exception:
         logger.exception("Falha ao analisar imagem")
         await _send_error(remote_jid, msg_id, "Não consegui analisar a imagem.")
-        return {"rationale": ""}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     description = (
         f"{image_analysis}\n\n"
@@ -277,7 +281,7 @@ async def process_image(state: WorkflowState) -> WorkflowState:
     except Exception:
         logger.exception("Falha no fact-check da imagem")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
-        return {"rationale": ""}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     return {
         "description": description,
@@ -332,14 +336,14 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         else:
             logger.warning("process_video: cache yt-dlp expirado para media_id=%s", media_id)
             await _send_error(remote_jid, msg_id, "O download do vídeo expirou. Por favor, envie o link novamente.")
-            return {"rationale": ""}  # type: ignore[return-value]
+            return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
     else:
         try:
             video_b64 = await whatsapp_api.download_media_as_base64(media_id)
         except Exception:
             logger.exception("Falha ao baixar vídeo media_id=%s", media_id)
             await _send_error(remote_jid, msg_id, "Não consegui baixar o vídeo.")
-            return {"rationale": ""}  # type: ignore[return-value]
+            return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     try:
         duration = get_video_duration_from_base64(video_b64)
@@ -367,7 +371,7 @@ async def process_video(state: WorkflowState) -> WorkflowState:
     except Exception:
         logger.exception("Falha ao analisar vídeo")
         await _send_error(remote_jid, msg_id, "Não consegui analisar o vídeo.")
-        return {"rationale": ""}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     caption = state.get("caption", "")
 
@@ -389,7 +393,7 @@ async def process_video(state: WorkflowState) -> WorkflowState:
     except Exception:
         logger.exception("Falha no fact-check do vídeo")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
-        return {"rationale": ""}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
     return {
         "description": description,

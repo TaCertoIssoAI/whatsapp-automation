@@ -45,6 +45,7 @@ class WorkflowState(TypedDict, total=False):
     # Resultado do fact-checking
     rationale: str
     audio_script: str
+    error_sent: bool
 
     # Texto extra do batch (quando múltiplas mensagens são enviadas juntas)
     # Contém todos os textos + legendas + descrições de mídias extras concatenados

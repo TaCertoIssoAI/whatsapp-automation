@@ -69,6 +69,9 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
         return {}  # type: ignore[return-value]
 
     if not rationale:
+        if state.get("error_sent"):
+            logger.info("Erro já enviado ao usuário, ignorando fallback")
+            return {}  # type: ignore[return-value]
         # Rationale vazio = algo falhou no processamento, notificar usuário
         fallback_msg = (
             "⚠️ Não consegui analisar o conteúdo enviado. "
