@@ -376,8 +376,8 @@ async def _queue_worker(worker_id: int) -> None:
                                         )
                                         continue
 
-                                    is_production = os.environ.get("IS_PRODUCTION", "false").lower() == "true"
-                                    is_not_working = os.environ.get("NOT_WORKING", "false").lower() == "true"
+                                    is_production = os.environ.get("IS_PRODUCTION", "true").lower() == "true"
+                                    is_not_working = os.environ.get("NOT_WORKING", "true").lower() == "true"
 
                                     if is_production and is_not_working:
                                         logger.info("[worker-%d] Sistema em pausa (NOT_WORKING=true). Enviando aviso para %s", worker_id, sender)
@@ -385,7 +385,7 @@ async def _queue_worker(worker_id: int) -> None:
                                         asyncio.create_task(
                                             whatsapp_api.send_text(
                                                 sender,
-                                                "🤖 Opa! O Tá Certo Isso AI? precisou fazer uma pausa rápida.\n\nNós estamos recebendo um volume gigantesco de pedidos de checagem ao mesmo tempo! Como somos um projeto totalmente gratuito, nosso sistema atingiu o limite de acessos e está temporariamente indisponível.\n\nJá estamos trabalhando para ajustar tudo e voltar a combater a desinformação o mais rápido possível.\n\nQuer ser a primeira pessoa a saber quando o bot voltar a funcionar? Deixe seu contato no link abaixo (prometemos que é bem rápido!): \n👉 https://forms.gle/ZLz9fz9RFoRQTuhY8\n\nObrigado pela paciência e por nos ajudar a combater as fake news! 🔎"
+                                                "🤖 Opa! O Tá Certo Isso AI? precisou fazer uma pausa rápida.\n\nNós estamos recebendo um volume gigantesco de pedidos de checagem ao mesmo tempo! Como somos um projeto totalmente gratuito, nosso sistema atingiu o limite de acessos e está temporariamente indisponível.\n\nJá estamos trabalhando para ajustar tudo e voltar a combater a desinformação o mais rápido possível.\n\nQuer ser a primeira pessoa a saber quando o bot voltar a funcionar? Deixe seu contato no link abaixo (prometemos que é bem rápido!): \n👉 https://forms.gle/ZLz9fz9RFoRQTuhY8\n\nObrigado pela paciência e por nos ajudar a combater as fake news! 🔎\n\nE siga a gente no Instagram para acompanhar as novidades: https://www.instagram.com/tacertoisso.ai"
                                             )
                                         )
                                         continue

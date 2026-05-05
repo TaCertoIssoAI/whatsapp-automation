@@ -14,9 +14,10 @@ IMAGE_NAME="whatsapp-integration"
 VERSION=$(date +%Y%m%d-%H%M%S)
 VERSION_TAG="${ENV}-${VERSION}"
 
-echo "🐳 Building Docker image for ${ENV}..."
+echo "🐳 Building Docker image for ${ENV} (linux/amd64)..."
 
 docker build \
+  --platform linux/amd64 \
   -t ${IMAGE_NAME}:${ENV} \
   -t ${IMAGE_NAME}:${VERSION_TAG} \
   .
