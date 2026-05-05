@@ -25,9 +25,6 @@ ENV/
 .env.local
 .env.example
 
-# Credenciais extras (o firebase-credentials.json é mantido como fallback)
-credentials.json
-
 # Git
 .git/
 .gitignore
