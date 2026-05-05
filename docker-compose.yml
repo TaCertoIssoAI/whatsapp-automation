@@ -44,17 +44,21 @@ services:
       - WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET}
       
       # Google Gemini
-      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY}
-      - GEMINI_TRANSCRIPTION_MODEL=${GEMINI_TRANSCRIPTION_MODEL:-gemini-3-flash-preview}
-      - GEMINI_IMAGE_MODEL=${GEMINI_IMAGE_MODEL:-gemini-3-flash-preview}
-      - GEMINI_VIDEO_MODEL=${GEMINI_VIDEO_MODEL:-gemini-3-flash-preview}
-      - GEMINI_TTS_MODEL=${GEMINI_TTS_MODEL:-gemini-2.5-flash-preview-tts}
+      - PROJECT_ID=${PROJECT_ID}
+      - VERTEX_LOCATION=${VERTEX_LOCATION:-global}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      - GEMINI_TRANSCRIPTION_MODEL=${GEMINI_TRANSCRIPTION_MODEL:-gemini-2.5-flash-lite}
+      - GEMINI_IMAGE_MODEL=${GEMINI_IMAGE_MODEL:-gemini-2.5-flash-lite}
+      - GEMINI_VIDEO_MODEL=${GEMINI_VIDEO_MODEL:-gemini-2.5-flash-lite}
+      - GEMINI_TTS_MODEL=${GEMINI_TTS_MODEL:-gemini-2.5-flash-tts}
       - GEMINI_TTS_VOICE=${GEMINI_TTS_VOICE:-Kore}
       - GEMINI_CLASSIFIER_MODEL=${GEMINI_CLASSIFIER_MODEL:-gemini-2.5-flash-lite}
       - GEMINI_CHAT_MODEL=${GEMINI_CHAT_MODEL:-gemini-2.5-flash-lite}
       
       # Google Cloud Vision API
       - GOOGLE_CLOUD_API_KEY=${GOOGLE_CLOUD_API_KEY}
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro
       
       # Fact-checking API
       - FACT_CHECK_API_URL=${FACT_CHECK_API_URL:-https://ta-certo-isso-ai-767652480333.southamerica-east1.run.app}

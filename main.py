@@ -519,7 +519,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     missing = []
     for var_name in (
         "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID",
-        "WHATSAPP_VERIFY_TOKEN", "GOOGLE_GEMINI_API_KEY",
+        "WHATSAPP_VERIFY_TOKEN", "PROJECT_ID", "VERTEX_LOCATION",
         "FACT_CHECK_API_URL",
     ):
         if not getattr(config, var_name, ""):

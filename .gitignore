@@ -189,3 +189,4 @@ lerna-debug.log*
 firebase-credentials.json
 *firebase*.json
 *credentials*.json
+credentials.json

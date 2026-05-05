@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 
 import config
+from nodes.genai_client import get_genai_client
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +67,8 @@ async def _retry_async(func, *args, label: str = ""):
 
 
 def _get_gemini_client():
-    """Retorna um cliente Gemini (criado sob demanda)."""
-    from google import genai
-
-    return genai.Client(api_key=config.GOOGLE_GEMINI_API_KEY)
+    """Backward-compatible name: returns Vertex AI client."""
+    return get_genai_client()
 
 
 # ──────────────────────── Gemini — Transcrição de Áudio ────────────────────────
@@ -182,43 +181,27 @@ Descrição completa do vídeo:
 
 async def analyze_video(video_base64: str) -> str:
     """Analisa vídeo usando Google Gemini com retry."""
+    from google.genai import types
+
     client = _get_gemini_client()
     video_bytes = base64.b64decode(video_base64)
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-        tmp.write(video_bytes)
-        tmp_path = Path(tmp.name)
-
-    try:
-        uploaded_file = await asyncio.to_thread(client.files.upload, file=tmp_path)
-
-        max_wait = 60
-        poll_interval = 2
-        waited = 0
-        while uploaded_file.state and uploaded_file.state.name != "ACTIVE":
-            if uploaded_file.state.name == "FAILED":
-                raise RuntimeError(f"Upload do vídeo falhou: {uploaded_file.state.name}")
-            if waited >= max_wait:
-                raise RuntimeError(f"Timeout aguardando processamento do vídeo (estado: {uploaded_file.state.name})")
-            await asyncio.sleep(poll_interval)
-            waited += poll_interval
-            uploaded_file = await asyncio.to_thread(client.files.get, name=uploaded_file.name)
-
-        async def _do():
-            def _generate():
-                return client.models.generate_content(
-                    model=config.GEMINI_VIDEO_MODEL,
-                    contents=[uploaded_file, VIDEO_ANALYSIS_PROMPT],
-                )
-            response = await asyncio.wait_for(
-                asyncio.to_thread(_generate), timeout=_GEMINI_CALL_TIMEOUT
+    async def _do():
+        def _generate():
+            return client.models.generate_content(
+                model=config.GEMINI_VIDEO_MODEL,
+                contents=[
+                    types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"),
+                    VIDEO_ANALYSIS_PROMPT,
+                ],
             )
-            return response.text or ""
+        response = await asyncio.wait_for(
+            asyncio.to_thread(_generate), timeout=_GEMINI_CALL_TIMEOUT
+        )
+        return response.text or ""
 
-        async with _GEMINI_SEMAPHORE:
-            return await _retry_async(_do, label="analyze_video")
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    async with _GEMINI_SEMAPHORE:
+        return await _retry_async(_do, label="analyze_video")
 
 
 # ──────────────────────── Gemini — Análise de Imagem ──────

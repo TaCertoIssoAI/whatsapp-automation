@@ -1,7 +1,7 @@
 """Integration tests for media processing flows.
 
-These tests call real Google Gemini APIs for transcription / image / video
-analysis, so GOOGLE_GEMINI_API_KEY must be set.  WhatsApp and fact-checker
+These tests call real Vertex AI Gemini APIs for transcription / image / video
+analysis, so PROJECT_ID/VERTEX_LOCATION/ADC must be set. WhatsApp and fact-checker
 calls are mocked since they are not the focus of these tests.
 """
 
@@ -33,10 +33,10 @@ def _load_b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode()
 
 
-def _require_gemini_key():
-    """Pytest skip helper — skips if the Gemini key is not configured."""
-    if not config.GOOGLE_GEMINI_API_KEY:
-        pytest.skip("GOOGLE_GEMINI_API_KEY not set — skipping integration test")
+def _require_vertex_env():
+    """Pytest skip helper — skips if Vertex env is not configured."""
+    if not config.PROJECT_ID or not config.VERTEX_LOCATION:
+        pytest.skip("PROJECT_ID/VERTEX_LOCATION not set — skipping integration test")
 
 
 def _require_fixture(path: Path):
@@ -119,7 +119,7 @@ def _mock_fact_check_client(response: dict | None = None):
 @pytest.mark.asyncio
 async def test_transcribe_audio():
     """Transcribe a short audio clip via Gemini."""
-    _require_gemini_key()
+    _require_vertex_env()
     _require_fixture(_SAMPLE_AUDIO_PATH)
 
     from nodes.ai_services import transcribe_audio
@@ -134,7 +134,7 @@ async def test_transcribe_audio():
 @pytest.mark.asyncio
 async def test_analyze_image_content():
     """Analyze an image via Gemini and check we get a description back."""
-    _require_gemini_key()
+    _require_vertex_env()
     _require_fixture(_SAMPLE_IMAGE_PATH)
 
     from nodes.ai_services import analyze_image_content
@@ -149,7 +149,7 @@ async def test_analyze_image_content():
 @pytest.mark.asyncio
 async def test_analyze_video():
     """Analyze a short video via Gemini."""
-    _require_gemini_key()
+    _require_vertex_env()
     _require_fixture(_SAMPLE_VIDEO_PATH)
 
     from nodes.ai_services import analyze_video
@@ -181,7 +181,7 @@ async def test_process_image_full_flow():
 
     WhatsApp API and fact-checker are mocked; Gemini calls are real.
     """
-    _require_gemini_key()
+    _require_vertex_env()
     _require_fixture(_SAMPLE_IMAGE_PATH)
 
     from nodes.media_processor import process_image
@@ -234,7 +234,7 @@ async def test_process_image_full_flow():
 @pytest.mark.asyncio
 async def test_process_image_with_deepfake():
     """Image processing passes deepfake results to fact-checker when available."""
-    _require_gemini_key()
+    _require_vertex_env()
     _require_fixture(_SAMPLE_IMAGE_PATH)
 
     from nodes.media_processor import process_image
@@ -292,7 +292,7 @@ async def test_process_video_full_flow():
 
     WhatsApp API and fact-checker are mocked; Gemini calls are real.
     """
-    _require_gemini_key()
+    _require_vertex_env()
     _require_fixture(_SAMPLE_VIDEO_PATH)
 
     from nodes.media_processor import process_video
@@ -339,7 +339,7 @@ async def test_process_video_full_flow():
 @pytest.mark.asyncio
 async def test_process_video_with_deepfake():
     """Video processing passes deepfake results to fact-checker."""
-    _require_gemini_key()
+    _require_vertex_env()
     _require_fixture(_SAMPLE_VIDEO_PATH)
 
     from nodes.media_processor import process_video
@@ -442,7 +442,7 @@ async def test_process_video_too_long_skips_analysis():
 @pytest.mark.asyncio
 async def test_process_audio_full_flow():
     """End-to-end audio processing: Gemini transcription + fact-check."""
-    _require_gemini_key()
+    _require_vertex_env()
     _require_fixture(_SAMPLE_AUDIO_PATH)
 
     from nodes.media_processor import process_audio

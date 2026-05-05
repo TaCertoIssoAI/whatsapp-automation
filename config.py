@@ -15,14 +15,17 @@ WHATSAPP_API_BASE_URL = (
     f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_NUMBER_ID}"
 )
 
-# ──────────────────────── Google Gemini ────────────────────────
-GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")
+# ──────────────────────── Vertex AI (Gemini) ────────────────────────
+# Auth is via Application Default Credentials (ADC). For local/dev, set:
+#   GOOGLE_APPLICATION_CREDENTIALS=./credentials.json
+PROJECT_ID = os.getenv("PROJECT_ID", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
+VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", os.getenv("GOOGLE_CLOUD_LOCATION", ""))
 
-# Modelos Gemini (editáveis via .env)
-GEMINI_TRANSCRIPTION_MODEL = os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-3-flash-preview")
-GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-flash-preview")
-GEMINI_VIDEO_MODEL = os.getenv("GEMINI_VIDEO_MODEL", "gemini-3-flash-preview")
-GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+# Modelos Gemini (editáveis via .env) — Vertex defaults
+GEMINI_TRANSCRIPTION_MODEL = os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-2.5-flash-lite")
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-lite")
+GEMINI_VIDEO_MODEL = os.getenv("GEMINI_VIDEO_MODEL", "gemini-2.5-flash-lite")
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
 GEMINI_CLASSIFIER_MODEL = os.getenv("GEMINI_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
 GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash-lite")

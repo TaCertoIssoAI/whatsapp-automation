@@ -267,10 +267,10 @@ Mensagem(ns) atual(is) do usuário:
 
 async def _call_gemini_classifier(messages_text: str) -> str:
     """Chama o Gemini para classificar a mensagem como VERIFICAR ou CONVERSAR."""
-    from google import genai
     from google.genai import types
+    from nodes.genai_client import get_genai_client
 
-    client = genai.Client(api_key=config.GOOGLE_GEMINI_API_KEY)
+    client = get_genai_client()
     prompt = _CLASSIFIER_PROMPT.format(messages=messages_text)
 
     def _call():
@@ -293,10 +293,10 @@ async def _call_gemini_classifier(messages_text: str) -> str:
 
 async def _call_gemini_chat(messages_text: str, history_text: str) -> str:
     """Chama o Gemini para gerar uma resposta de conversa."""
-    from google import genai
     from google.genai import types
+    from nodes.genai_client import get_genai_client
 
-    client = genai.Client(api_key=config.GOOGLE_GEMINI_API_KEY)
+    client = get_genai_client()
     prompt = _CHAT_PROMPT.format(messages=messages_text, history=history_text)
 
     def _call():
