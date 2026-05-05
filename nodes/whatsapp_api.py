@@ -397,3 +397,19 @@ def typing_indicator_fire_and_forget(message_id: str) -> None:
         loop.create_task(send_typing_indicator(message_id))
     except RuntimeError:
         pass
+
+
+# ──────────────────────── Compat (tests) ────────────────────────
+
+
+async def start_typing_loop(remote_jid: str, message_id: str):
+    """Compatibility shim for older tests.
+
+    The current codebase relies on ``send_text(..., keep_typing=True)`` and
+    internal typing keepalive logic. Some tests still patch a legacy
+    ``start_typing_loop`` symbol, so we expose it here.
+    """
+    ev = asyncio.Event()
+    register_typing_stop_event(remote_jid, ev, message_id=message_id)
+    typing_indicator_fire_and_forget(message_id)
+    return ev

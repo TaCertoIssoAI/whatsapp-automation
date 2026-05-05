@@ -33,6 +33,11 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+async def _get_fact_check_client() -> httpx.AsyncClient:
+    """Client factory (patchable in tests)."""
+    return _get_client()
+
+
 async def close_client() -> None:
     """Fecha o client HTTP (chamado no shutdown do app)."""
     global _client
@@ -43,7 +48,7 @@ async def close_client() -> None:
 
 async def _post_with_retry(url: str, payload: dict) -> dict:
     """POST com retry e exponential backoff para erros 5xx."""
-    client = _get_client()
+    client = await _get_fact_check_client()
     last_exc: Exception | None = None
 
     for attempt in range(_MAX_RETRIES):
