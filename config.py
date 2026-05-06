@@ -22,9 +22,9 @@ PROJECT_ID = os.getenv("PROJECT_ID", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
 VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", os.getenv("GOOGLE_CLOUD_LOCATION", ""))
 
 # Modelos Gemini (editáveis via .env) — Vertex defaults
-GEMINI_TRANSCRIPTION_MODEL = os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-2.5-flash")
-GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-lite")
-GEMINI_VIDEO_MODEL = os.getenv("GEMINI_VIDEO_MODEL", "gemini-2.5-flash")
+GEMINI_TRANSCRIPTION_MODEL = os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-2.5-flash-lite")
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
+GEMINI_VIDEO_MODEL = os.getenv("GEMINI_VIDEO_MODEL", "gemini-2.5-flash-lite")
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
 
@@ -36,9 +36,9 @@ GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")
 
 # ──────────────────────── Deep-fake Detection Service ────────────────────────
 DEEP_FAKE_SERVICE_URL = os.getenv("DEEP_FAKE_SERVICE_URL", "")
-DEEP_FAKE_VIDEO = os.getenv("DEEP_FAKE_VIDEO", "true").lower() == "true"
-DEEP_FAKE_IMAGE = os.getenv("DEEP_FAKE_IMAGE", "true").lower() == "true"
-DEEP_FAKE_AUDIO = os.getenv("DEEP_FAKE_AUDIO", "true").lower() == "true"
+DEEP_FAKE_VIDEO = os.getenv("DEEP_FAKE_VIDEO", "false").lower() == "true"
+DEEP_FAKE_IMAGE = os.getenv("DEEP_FAKE_IMAGE", "false").lower() == "true"
+DEEP_FAKE_AUDIO = os.getenv("DEEP_FAKE_AUDIO", "false").lower() == "true"
 
 # ──────────────────────── Fact-checking API ────────────────────────
 FACT_CHECK_API_URL = os.getenv(

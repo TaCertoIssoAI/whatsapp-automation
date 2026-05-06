@@ -1252,9 +1252,9 @@
         "operation": "analyze",
         "modelId": {
           "__rl": true,
-          "value": "models/gemini-2.5-flash",
+          "value": "models/gemini-2.5-flash-lite",
           "mode": "list",
-          "cachedResultName": "models/gemini-2.5-flash"
+          "cachedResultName": "models/gemini-2.5-flash-lite"
         },
         "text": "Você receberá um vídeo enviado pelo usuário. Sua tarefa é:\n\n- Analisar cuidadosamente todas as cenas do vídeo, frame a frame.\n- Descrever detalhadamente tudo o que aparece: pessoas, objetos, ações, ambiente, iluminação, cores, expressões, movimentos, mudanças de cena e qualquer elemento visual relevante.\n- Transcrever todo o áudio do vídeo, incluindo falas, ruídos, música, textos narrados e sons de fundo.\n- Escrever todos os textos que aparecerem na tela, como legendas, placas, banners, telas de computador, mensagens, símbolos ou números.\n- Indicar, sempre que possível, os momentos aproximados (timestamps) onde cada evento ocorre.\n- Caso ocorram várias cenas, descrevê-las em ordem cronológica.\n\nRetorne no seguinte formato:\n\nDescrição completa do vídeo:\n[sua descrição detalhada aqui]",
         "inputType": "binary",

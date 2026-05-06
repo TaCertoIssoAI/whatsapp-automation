@@ -51,6 +51,8 @@ async def _post_with_retry(url: str, payload: dict) -> dict:
     client = await _get_fact_check_client()
     last_exc: Exception | None = None
 
+    logger.info(f"Enviando requisição (com payload) para a API de fact-checking: {url}")
+
     for attempt in range(_MAX_RETRIES):
         try:
             resp = await client.post(

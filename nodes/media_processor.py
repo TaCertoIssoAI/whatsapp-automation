@@ -18,6 +18,7 @@ import struct
 
 from nodes import ai_services, whatsapp_api, fact_checker
 from state import WorkflowState
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,6 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         await _send_error(remote_jid, msg_id, "Não consegui baixar o áudio.")
         return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
-    import config
     try:
         if config.DEEP_FAKE_AUDIO:
             transcription, deepfake_results = await asyncio.gather(
@@ -142,10 +142,12 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         else:
             transcription = await ai_services.transcribe_audio(audio_b64)
             deepfake_results = None
-    except Exception:
-        logger.exception("Falha ao transcrever áudio")
+    except Exception as e:
+        logger.error(f"Falha ao transcrever áudio media_id={media_id}: {e}")
         await _send_error(remote_jid, msg_id, "Não consegui transcrever o áudio.")
-        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}
+
+    logger.info(f"Transcrição do áudio {media_id[:20]}: {transcription[:100]}...")
 
     # Montar content_parts para o fact-checker
     batch_extra = state.get("batch_extra_text", "")
@@ -159,8 +161,8 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         result = await fact_checker.check_content(
             state.get("endpoint_api", ""), content_parts, deepfake_results=deepfake_results
         )
-    except Exception:
-        logger.exception("Falha no fact-check do áudio")
+    except Exception as e:
+        logger.error(f"Falha no fact-check do áudio media_id={media_id}: {e}")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
         return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
@@ -177,14 +179,6 @@ async def process_text(state: WorkflowState) -> WorkflowState:
     remote_jid = state.get("numero_quem_enviou", "")
     msg_id = state.get("id_mensagem", "")
     mensagem = state.get("mensagem", "")
-
-    logger.info(
-        "process_text: jid=%s, msg_id=%s, msg_len=%d, msg_preview=%s",
-        remote_jid[-4:] if remote_jid else "?",
-        msg_id[:20] if msg_id else "?",
-        len(mensagem) if mensagem else 0,
-        repr(mensagem[:80]) if mensagem else "?",
-    )
 
     if not remote_jid or not mensagem:
         logger.error("process_text: dados insuficientes (jid=%s, msg=%s)", remote_jid, bool(mensagem))
@@ -213,8 +207,8 @@ async def process_text(state: WorkflowState) -> WorkflowState:
             mensagem.replace("\n", " "),
             content_type="text",
         )
-    except Exception:
-        logger.exception("Falha no fact-check do texto")
+    except Exception as e:
+        logger.error(f"Falha no fact-check do texto: {e}")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
         return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
@@ -248,33 +242,26 @@ async def process_image(state: WorkflowState) -> WorkflowState:
     except Exception:
         pass
 
-    import config
     try:
         image_b64 = await whatsapp_api.download_media_as_base64(media_id)
 
-        # Analisar imagem + Reverse search + Deep-fake (concorrente)
+        # Analisar imagem + Deep-fake (concorrente)
         if config.DEEP_FAKE_IMAGE:
-            image_analysis, reverse_result, deepfake_results = await asyncio.gather(
+            image_analysis, deepfake_results = await asyncio.gather(
                 ai_services.analyze_image_content(image_b64),
-                ai_services.reverse_image_search(image_b64),
                 ai_services.detect_deepfake(image_b64, filename="image.jpg"),
             )
         else:
-            image_analysis, reverse_result = await asyncio.gather(
-                ai_services.analyze_image_content(image_b64),
-                ai_services.reverse_image_search(image_b64),
-            )
+            image_analysis = await ai_services.analyze_image_content(image_b64)
             deepfake_results = None
-    except Exception:
-        logger.exception("Falha ao analisar imagem")
+    except Exception as e:
+        logger.error(f"Falha ao analisar imagem media_id={media_id}: {e}")
         await _send_error(remote_jid, msg_id, "Não consegui analisar a imagem.")
-        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}
 
-    description = (
-        f"{image_analysis}\n\n"
-        f"Informações de pesquisa reversa da imagem em sites da web: \n"
-        f"{reverse_result}"
-    )
+    logger.info(f"Análise da imagem {media_id[:20]}: {image_analysis[:100]}...")
+
+    description = f"{image_analysis}\n\n"
 
     caption = state.get("caption", "")
 
@@ -294,8 +281,8 @@ async def process_image(state: WorkflowState) -> WorkflowState:
         result = await fact_checker.check_content(
             state["endpoint_api"], content_parts, deepfake_results=deepfake_results
         )
-    except Exception:
-        logger.exception("Falha no fact-check da imagem")
+    except Exception as e:
+        logger.error(f"Falha no fact-check da imagem media_id={media_id}: {e}")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
         return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
@@ -312,14 +299,6 @@ async def process_video(state: WorkflowState) -> WorkflowState:
     remote_jid = state.get("numero_quem_enviou", "")
     msg_id = state.get("id_mensagem", "")
     media_id = state.get("media_id", "")
-
-    logger.info(
-        "process_video: jid=%s, msg_id=%s, media_id=%s, is_ytdlp=%s",
-        remote_jid[-4:] if remote_jid else "?",
-        msg_id[:20] if msg_id else "?",
-        media_id[:30] if media_id else "?",
-        media_id.startswith("ytdlp_local_") if media_id else False,
-    )
 
     if not remote_jid or not media_id:
         logger.error("process_video: dados insuficientes (jid=%s, media=%s)", remote_jid, media_id)
@@ -378,7 +357,6 @@ async def process_video(state: WorkflowState) -> WorkflowState:
             pass
         return {"rationale": "", "duration": duration}  # type: ignore[return-value]
 
-    import config
     try:
         # Analisar vídeo com Gemini + Deep-fake (concorrente)
         if config.DEEP_FAKE_VIDEO:
@@ -389,10 +367,12 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         else:
             description = await ai_services.analyze_video(video_b64)
             deepfake_results = None
-    except Exception:
-        logger.exception("Falha ao analisar vídeo")
+    except Exception as e:
+        logger.error(f"Falha ao analisar vídeo media_id={media_id}: {e}")
         await _send_error(remote_jid, msg_id, "Não consegui analisar o vídeo.")
-        return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
+        return {"rationale": "", "error_sent": True}
+
+    logger.info(f"Análise do vídeo {media_id[:20]}: {description[:100]}...")
 
     caption = state.get("caption", "")
 
@@ -411,8 +391,8 @@ async def process_video(state: WorkflowState) -> WorkflowState:
         result = await fact_checker.check_content(
             state["endpoint_api"], content_parts, deepfake_results=deepfake_results
         )
-    except Exception:
-        logger.exception("Falha no fact-check do vídeo")
+    except Exception as e:
+        logger.error(f"Falha no fact-check do vídeo media_id={media_id}: {e}")
         await _send_error(remote_jid, msg_id, "O serviço de verificação está temporariamente indisponível.")
         return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
