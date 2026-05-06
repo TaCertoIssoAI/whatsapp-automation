@@ -222,8 +222,11 @@ def _route_after_rationale(state: WorkflowState) -> str:
     tipo = state.get("tipo_mensagem", "")
     rationale = state.get("rationale", "")
 
-    if tipo == "audio" and rationale:
-        return "send_audio_response"
+    # Funcionalidade de responder com áudio temporariamente desativada
+    # para economizar requisições para a LLM.
+    # if tipo == "audio" and rationale:
+    #     return "send_audio_response"
+    
     return "__end__"
 
 

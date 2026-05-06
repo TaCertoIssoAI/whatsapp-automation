@@ -385,7 +385,7 @@ async def _queue_worker(worker_id: int) -> None:
                                         asyncio.create_task(
                                             whatsapp_api.send_text(
                                                 sender,
-                                                "🤖 Opa! O Tá Certo Isso AI? precisou fazer uma pausa rápida.\n\nNós estamos recebendo um volume gigantesco de pedidos de checagem ao mesmo tempo! Como somos um projeto totalmente gratuito, nosso sistema atingiu o limite de acessos e está temporariamente indisponível.\n\nJá estamos trabalhando para ajustar tudo e voltar a combater a desinformação o mais rápido possível.\n\nQuer ser a primeira pessoa a saber quando o bot voltar a funcionar? Deixe seu contato no link abaixo (prometemos que é bem rápido!): \n👉 https://forms.gle/ZLz9fz9RFoRQTuhY8\n\nObrigado pela paciência e por nos ajudar a combater as fake news! 🔎\n\nE siga a gente no Instagram para acompanhar as novidades: https://www.instagram.com/tacertoisso.ai"
+                                                "🤖 Opa! O Tá Certo Isso AI? precisou fazer uma pausa.\n\nNós estamos recebendo um volume gigantesco de pedidos de checagem ao mesmo tempo! Como somos um projeto totalmente gratuito, nosso sistema atingiu o limite de acessos e está temporariamente indisponível.\n\nJá estamos trabalhando para ajustar tudo e voltar a combater a desinformação o mais rápido possível.\n\nQuer ser a primeira pessoa a saber quando o bot voltar a funcionar? Deixe seu contato no link abaixo (prometemos que é bem rápido!): \n👉 https://forms.gle/ZLz9fz9RFoRQTuhY8\n\nObrigado pela paciência e por nos ajudar a combater as fake news! 🔎\n\nE siga a gente no Instagram para acompanhar as novidades: https://www.instagram.com/tacertoisso.ai"
                                             )
                                         )
                                         continue
@@ -548,8 +548,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("Assinatura HMAC: DESATIVADA")
 
     logger.info("Redis: %s", config.REDIS_URL)
-    logger.info("Classifier model: %s", config.GEMINI_CLASSIFIER_MODEL)
-    logger.info("Chat model: %s", config.GEMINI_CHAT_MODEL)
     logger.info("API: %s", config.WHATSAPP_API_BASE_URL)
     logger.info("Fact-check: %s", config.FACT_CHECK_API_URL)
     logger.info("Porta: %d", config.WEBHOOK_PORT)

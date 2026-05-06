@@ -34,7 +34,9 @@ _LIMIT_REACHED_MESSAGE = (
 
 _WELCOME_MESSAGE = (
     "Olá! 👋\n"
-    "Obrigado por usar nossa ferramenta de verificação de informações.\n"
+    "Obrigado por usar nossa ferramenta de verificação de informações.\n\n"
+    "Para começar, basta enviar um texto, áudio, imagem ou vídeo que você queira verificar. "
+    "Eu analisarei o conteúdo e te responderei se a informação é confiável.\n\n"
     "Antes de começarmos, informamos que ao continuar você concorda com nossos "
     "Termos e Condições e Política de Privacidade:\n"
     "tacertoissoai.com.br/termos-e-privacidade\n\n"

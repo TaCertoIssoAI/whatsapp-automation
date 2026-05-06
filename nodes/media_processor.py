@@ -132,8 +132,16 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
         await _send_error(remote_jid, msg_id, "Não consegui baixar o áudio.")
         return {"rationale": "", "error_sent": True}  # type: ignore[return-value]
 
+    import config
     try:
-        transcription = await ai_services.transcribe_audio(audio_b64)
+        if config.DEEP_FAKE_AUDIO:
+            transcription, deepfake_results = await asyncio.gather(
+                ai_services.transcribe_audio(audio_b64),
+                ai_services.detect_deepfake(audio_b64, filename="audio.ogg"),
+            )
+        else:
+            transcription = await ai_services.transcribe_audio(audio_b64)
+            deepfake_results = None
     except Exception:
         logger.exception("Falha ao transcrever áudio")
         await _send_error(remote_jid, msg_id, "Não consegui transcrever o áudio.")
@@ -149,7 +157,7 @@ async def process_audio(state: WorkflowState) -> WorkflowState:
 
     try:
         result = await fact_checker.check_content(
-            state.get("endpoint_api", ""), content_parts,
+            state.get("endpoint_api", ""), content_parts, deepfake_results=deepfake_results
         )
     except Exception:
         logger.exception("Falha no fact-check do áudio")
@@ -240,15 +248,23 @@ async def process_image(state: WorkflowState) -> WorkflowState:
     except Exception:
         pass
 
+    import config
     try:
         image_b64 = await whatsapp_api.download_media_as_base64(media_id)
 
         # Analisar imagem + Reverse search + Deep-fake (concorrente)
-        image_analysis, reverse_result, deepfake_results = await asyncio.gather(
-            ai_services.analyze_image_content(image_b64),
-            ai_services.reverse_image_search(image_b64),
-            ai_services.detect_deepfake(image_b64, filename="image.jpg"),
-        )
+        if config.DEEP_FAKE_IMAGE:
+            image_analysis, reverse_result, deepfake_results = await asyncio.gather(
+                ai_services.analyze_image_content(image_b64),
+                ai_services.reverse_image_search(image_b64),
+                ai_services.detect_deepfake(image_b64, filename="image.jpg"),
+            )
+        else:
+            image_analysis, reverse_result = await asyncio.gather(
+                ai_services.analyze_image_content(image_b64),
+                ai_services.reverse_image_search(image_b64),
+            )
+            deepfake_results = None
     except Exception:
         logger.exception("Falha ao analisar imagem")
         await _send_error(remote_jid, msg_id, "Não consegui analisar a imagem.")
@@ -362,12 +378,17 @@ async def process_video(state: WorkflowState) -> WorkflowState:
             pass
         return {"rationale": "", "duration": duration}  # type: ignore[return-value]
 
+    import config
     try:
         # Analisar vídeo com Gemini + Deep-fake (concorrente)
-        description, deepfake_results = await asyncio.gather(
-            ai_services.analyze_video(video_b64),
-            ai_services.detect_deepfake(video_b64, filename="video.mp4"),
-        )
+        if config.DEEP_FAKE_VIDEO:
+            description, deepfake_results = await asyncio.gather(
+                ai_services.analyze_video(video_b64),
+                ai_services.detect_deepfake(video_b64, filename="video.mp4"),
+            )
+        else:
+            description = await ai_services.analyze_video(video_b64)
+            deepfake_results = None
     except Exception:
         logger.exception("Falha ao analisar vídeo")
         await _send_error(remote_jid, msg_id, "Não consegui analisar o vídeo.")

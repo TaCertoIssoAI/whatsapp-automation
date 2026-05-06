@@ -22,9 +22,6 @@ async def send_welcome_message(state: WorkflowState) -> WorkflowState:
     try:
         await whatsapp_api.send_text(remote_jid, _WELCOME_MESSAGE)
         logger.info("[welcome] ✅ Mensagem de boas-vindas enviada")
-        # Salvar resposta do bot no histórico de chat
-        from nodes.message_handler import save_bot_response_to_history
-        await save_bot_response_to_history(remote_jid, _WELCOME_MESSAGE)
     except Exception:
         logger.exception("[welcome] Falha ao enviar mensagem de boas-vindas para %s", remote_jid)
 
@@ -49,9 +46,6 @@ async def handle_reset_command(state: WorkflowState) -> WorkflowState:
             quoted_message_id=msg_id,
         )
         logger.info("[reset] \u2705 Confirma\u00e7\u00e3o de reset enviada")
-        # Salvar resposta do bot no hist\u00f3rico de chat
-        from nodes.message_handler import save_bot_response_to_history
-        await save_bot_response_to_history(remote_jid, _RESET_CONFIRMATION_MESSAGE)
     except Exception:
         logger.exception("[reset] Falha ao enviar confirma\u00e7\u00e3o de reset para %s", remote_jid)
 
@@ -83,18 +77,12 @@ async def send_rationale_text(state: WorkflowState) -> WorkflowState:
                 fallback_msg,
                 quoted_message_id=msg_id or None,
             )
-            # Salvar resposta do bot no histórico de chat
-            from nodes.message_handler import save_bot_response_to_history
-            await save_bot_response_to_history(remote_jid, fallback_msg)
         except Exception:
             logger.exception("Falha ao enviar mensagem de fallback para %s", remote_jid)
         return {}  # type: ignore[return-value]
 
     try:
         await whatsapp_api.send_text(remote_jid, rationale, quoted_message_id=msg_id)
-        # Salvar resposta do bot no histórico de chat
-        from nodes.message_handler import save_bot_response_to_history
-        await save_bot_response_to_history(remote_jid, rationale)
     except Exception:
         logger.exception("Falha ao enviar rationale para %s", remote_jid)
         try:
@@ -155,9 +143,6 @@ async def handle_greeting(state: WorkflowState) -> WorkflowState:
             greeting_response,
             quoted_message_id=msg_id,
         )
-        # Salvar resposta do bot no histórico de chat
-        from nodes.message_handler import save_bot_response_to_history
-        await save_bot_response_to_history(remote_jid, greeting_response)
     except Exception:
         logger.exception("Falha ao responder saudação para %s", remote_jid)
 
@@ -182,9 +167,6 @@ async def handle_document_unsupported(state: WorkflowState) -> WorkflowState:
             unsupported_msg,
             quoted_message_id=msg_id,
         )
-        # Salvar resposta do bot no histórico de chat
-        from nodes.message_handler import save_bot_response_to_history
-        await save_bot_response_to_history(remote_jid, unsupported_msg)
     except Exception:
         logger.exception("Falha ao enviar msg de doc não suportado para %s", remote_jid)
 

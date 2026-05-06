@@ -102,7 +102,7 @@ def main() -> int:
         os.getenv("SMOKE_TEXT_MODELS", "gemini-2.5-flash-lite,gemini-2.5-flash,gemini-3-flash,gemini-3-flash-preview")
     )
     multimodal_models = _split_models(
-        os.getenv("SMOKE_MM_MODELS", "gemini-2.5-flash-lite,gemini-2.5-flash,gemini-3-flash,gemini-3-flash-preview")
+        os.getenv("SMOKE_MM_MODELS", "gemini-2.5-flash,gemini-3-flash,gemini-3-flash-preview")
     )
     tts_models = _split_models(
         os.getenv("SMOKE_TTS_MODELS", "gemini-2.5-flash-tts,gemini-2.5-flash-preview-tts")
