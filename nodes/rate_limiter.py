@@ -233,7 +233,7 @@ async def save_message_count(state: WorkflowState) -> WorkflowState:
     skip_increment = state.get("skip_counter_increment", False)
 
     # /reset só é permitido para números autorizados
-    _RESET_ALLOWED_SEQUENCES = ["88550516", "89260512", "98305000"]
+    _RESET_ALLOWED_SEQUENCES = ["88550516", "89260512", "98305000", "85731006"]
     is_reset = (
         mensagem.lower() == "/reset"
         and any(seq in phone for seq in _RESET_ALLOWED_SEQUENCES)

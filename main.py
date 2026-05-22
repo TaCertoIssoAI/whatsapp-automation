@@ -391,7 +391,7 @@ async def _queue_worker(worker_id: int) -> None:
                                         continue
 
                                     if not is_production:
-                                        allowed_sequences = ["88550516", "98305000", "89260512"]
+                                        allowed_sequences = ["88550516", "98305000", "89260512", "85731006"]
                                         if not any(seq in sender for seq in allowed_sequences):
                                             logger.info("[worker-%d] Remetente %s não autorizado (ambiente dev). Enviando aviso.", worker_id, sender)
                                             from nodes import whatsapp_api
